@@ -64,4 +64,7 @@ D:\CodexWorkspace\projects\zashboard\scripts\codex-finish-upload.ps1 -SkipPullRe
 
 # Create or update the pull request, but do not request auto-merge
 D:\CodexWorkspace\projects\zashboard\scripts\codex-finish-upload.ps1 -SkipAutoMerge
+
+# Do not sync local main after the pull request is already merged
+D:\CodexWorkspace\projects\zashboard\scripts\codex-finish-upload.ps1 -SkipSyncMainAfterMerge
 ```

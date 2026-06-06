@@ -7,7 +7,8 @@ param(
     [switch]$SkipBuild,
     [switch]$PushMain,
     [switch]$SkipPullRequest,
-    [switch]$SkipAutoMerge
+    [switch]$SkipAutoMerge,
+    [switch]$SkipSyncMainAfterMerge
 )
 
 $ErrorActionPreference = "Stop"
@@ -119,12 +120,12 @@ function Invoke-PullRequestAutomation {
 
     if ($PushMain -or $SkipPullRequest) {
         Write-Host "Pull request automation skipped."
-        return
+        return ""
     }
 
     if (-not $RepositorySlug) {
         Write-Host "Could not derive GitHub repository from origin remote."
-        return
+        return ""
     }
 
     $title = $PrTitle
@@ -173,7 +174,7 @@ function Invoke-PullRequestAutomation {
             Write-Host "Could not create pull request automatically."
             Write-Host $createResult.Output
             Write-Host "Manual pull request URL: https://github.com/$RepositorySlug/pull/new/$HeadBranch"
-            return
+            return ""
         }
 
         $prUrl = $createResult.Output.Trim()
@@ -182,7 +183,7 @@ function Invoke-PullRequestAutomation {
 
     if ($SkipAutoMerge) {
         Write-Host "Auto-merge skipped."
-        return
+        return $prUrl
     }
 
     $mergeResult = Invoke-Gh -Arguments @(
@@ -197,6 +198,81 @@ function Invoke-PullRequestAutomation {
         Write-Host "Could not enable auto-merge automatically."
         Write-Host $mergeResult.Output
     }
+
+    return $prUrl
+}
+
+function Test-WorkingTreeClean {
+    $status = @(git status --porcelain)
+    return $status.Count -eq 0
+}
+
+function Get-PullRequestState {
+    param(
+        [string]$RepositorySlug,
+        [string]$PullRequestUrl
+    )
+
+    if (-not $RepositorySlug -or -not $PullRequestUrl) {
+        return $null
+    }
+
+    $prNumber = [regex]::Match($PullRequestUrl, "/pull/(?<number>\d+)$").Groups["number"].Value
+    if (-not $prNumber) {
+        return $null
+    }
+
+    $result = Invoke-Gh -Arguments @(
+        "api",
+        "repos/$RepositorySlug/pulls/$prNumber",
+        "--jq",
+        "{number, html_url, state, merged, merged_at, merge_commit_sha}"
+    )
+
+    if (-not $result.Ok -or -not $result.Output.Trim()) {
+        Write-Host "Could not read pull request merge state."
+        if ($result.Output) {
+            Write-Host $result.Output
+        }
+        return $null
+    }
+
+    return $result.Output.Trim() | ConvertFrom-Json
+}
+
+function Sync-MainAfterMerge {
+    param(
+        [string]$RepositorySlug,
+        [string]$PullRequestUrl,
+        [string]$BaseBranch
+    )
+
+    if ($SkipSyncMainAfterMerge -or $PushMain -or $SkipPullRequest) {
+        Write-Host "Main sync after merge skipped."
+        return
+    }
+
+    $prState = Get-PullRequestState -RepositorySlug $RepositorySlug -PullRequestUrl $PullRequestUrl
+    if (-not $prState) {
+        return
+    }
+
+    if (-not $prState.merged) {
+        Write-Host "Pull request is not merged yet; local $BaseBranch was not synced."
+        return
+    }
+
+    if (-not (Test-WorkingTreeClean)) {
+        Write-Host "Pull request is merged, but working tree is not clean. Skipping local $BaseBranch sync."
+        Write-Host "Run git status, commit or stash local changes, then sync $BaseBranch manually."
+        return
+    }
+
+    Invoke-Git fetch origin $BaseBranch
+    Invoke-Git switch $BaseBranch
+    Invoke-Git branch --set-upstream-to="origin/$BaseBranch" $BaseBranch
+    Invoke-Git reset --hard "origin/$BaseBranch"
+    Write-Host "Local $BaseBranch synced to origin/$BaseBranch."
 }
 
 $excludedPaths = @(
@@ -286,7 +362,7 @@ Invoke-Step "Push" {
 
 Invoke-Step "Pull request and auto-merge" {
     $repositorySlug = Get-GitHubRepositorySlug
-    Invoke-PullRequestAutomation -RepositorySlug $repositorySlug -HeadBranch $Branch -BaseBranch $PrBase
+    $prUrl = Invoke-PullRequestAutomation -RepositorySlug $repositorySlug -HeadBranch $Branch -BaseBranch $PrBase
 
     if (-not (Test-Path "C:\Program Files\GitHub CLI\gh.exe") -and -not (Get-Command gh -ErrorAction SilentlyContinue)) {
         $branchUrl = Get-GitHubBranchUrl -RepositorySlug $repositorySlug -BranchName $Branch
@@ -294,6 +370,8 @@ Invoke-Step "Pull request and auto-merge" {
             Write-Host "Pushed branch: $branchUrl"
         }
     }
+
+    Sync-MainAfterMerge -RepositorySlug $repositorySlug -PullRequestUrl $prUrl -BaseBranch $PrBase
 }
 
 Write-Host ""
