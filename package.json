@@ -1,6 +1,6 @@
 {
   "name": "zashboard",
-  "version": "3.6.0",
+  "version": "3.7.1",
   "description": "A Dashboard Using Clash API",
   "license": "MIT",
   "type": "module",
@@ -18,7 +18,16 @@
     "package:ios": "vite build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-ios.ps1",
     "prepare": "husky",
     "preview": "vite preview",
-    "type-check": "vue-tsc --build --force"
+    "type-check": "vue-tsc --build --force",
+    "verify:mobile-dock": "node scripts/verify-mobile-dock.mjs",
+    "verify:mobile-dock:browser": "node scripts/verify-mobile-dock.mjs --browser",
+    "verify:mobile-dock:fixture-browser": "node scripts/verify-mobile-dock.mjs --fixture-browser",
+    "verify:mobile-dock:fixture-server": "node scripts/verify-mobile-dock.mjs --server-only",
+    "verify:scroll-smoothness": "node scripts/verify-scroll-smoothness.mjs",
+    "verify:scroll-smoothness:app-browser": "node scripts/verify-scroll-smoothness.mjs --app-browser",
+    "verify:scroll-smoothness:fixture-browser": "node scripts/verify-scroll-smoothness.mjs --fixture-browser",
+    "verify:scroll-smoothness:fixture-server": "node scripts/verify-scroll-smoothness.mjs --server-only",
+    "verify:scroll-smoothness:provider-app-browser": "node scripts/verify-scroll-smoothness.mjs --provider-grouped-app-browser"
   },
   "dependencies": {
     "@fontsource/fira-sans": "^5.2.7",

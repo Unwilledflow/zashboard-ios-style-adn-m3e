@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { useCalculateMaxProxies } from '@/composables/proxiesScroll'
-import { handlerProxySelect, proxyMap, proxyProviederList } from '@/store/proxies'
+import { handlerProxySelect, providerNameByProxy, proxyMap } from '@/store/proxies'
 import { computed } from 'vue'
 import ProxyNodeCard from './ProxyNodeCard.vue'
 import ProxyNodeGrid from './ProxyNodeGrid.vue'
+
+type ProviderProxyGroup = {
+  providerName: string
+  proxies: string[]
+}
 
 const props = defineProps<{
   name: string
@@ -11,73 +16,61 @@ const props = defineProps<{
   renderProxies: string[]
 }>()
 
-const groupedProxies = computed(() => {
-  const groupdProixes: Record<string, string[]> = {}
-  const providerKeys: string[] = []
+const activeIndex = computed(() => props.renderProxies.indexOf(props.now))
 
-  for (const proxy of props.renderProxies) {
-    const proxyNode = proxyMap.value[proxy]
-    const providerName =
-      proxyNode['provider-name'] ||
-      (proxyProviederList.value.find((group) => group.proxies.find((node) => node.name === proxy))
-        ?.name ??
-        '')
+const { maxProxies } = useCalculateMaxProxies(() => props.renderProxies.length, activeIndex)
 
-    if (groupdProixes[providerName]) {
-      groupdProixes[providerName].push(proxy)
-    } else {
-      if (providerName === '') {
-        providerKeys.unshift('')
-      } else {
-        providerKeys.push(providerName)
-      }
-
-      groupdProixes[providerName] = [proxy]
-    }
+const visibleProxies = computed(() => {
+  if (maxProxies.value >= props.renderProxies.length) {
+    return props.renderProxies
   }
 
-  return providerKeys.map((providerName) => ({
-    providerName,
-    proxies: groupdProixes[providerName],
-  }))
+  return props.renderProxies.slice(0, maxProxies.value)
 })
 
-const activeIndex = groupedProxies.value.reduce((acc, { proxies }) => {
-  const index = proxies.indexOf(props.now)
+const groupedProxies = computed(() => {
+  const groupedProxiesByProvider = new Map<string, ProviderProxyGroup>()
+  const groupedProxies: ProviderProxyGroup[] = []
+  let fallbackProviderNameByProxy: Map<string, string> | undefined
 
-  if (index !== -1) {
-    return acc + index
+  const getFallbackProviderName = (proxy: string) => {
+    fallbackProviderNameByProxy ??= providerNameByProxy.value
+    return fallbackProviderNameByProxy.get(proxy)
   }
-  return acc + proxies.length
-}, 0)
 
-const { maxProxies } = useCalculateMaxProxies(props.renderProxies.length, activeIndex)
+  for (const proxy of visibleProxies.value) {
+    const proxyNode = proxyMap.value[proxy]
+    const providerName = proxyNode['provider-name'] || getFallbackProviderName(proxy) || ''
 
-const truncatedProxies = computed(() => {
-  let displayCount = 0
-  const truncatedProxies: { providerName: string; proxies: string[] }[] = []
+    let providerProxies = groupedProxiesByProvider.get(providerName)
 
-  for (const { providerName, proxies } of groupedProxies.value) {
-    if (displayCount + proxies.length > maxProxies.value) {
-      truncatedProxies.push({
+    if (!providerProxies) {
+      providerProxies = {
         providerName,
-        proxies: proxies.slice(0, maxProxies.value - displayCount),
-      })
-      break
-    } else {
-      truncatedProxies.push({ providerName, proxies })
-      displayCount += proxies.length
+        proxies: [],
+      }
+
+      if (providerName === '') {
+        groupedProxies.unshift(providerProxies)
+      } else {
+        groupedProxies.push(providerProxies)
+      }
+
+      groupedProxiesByProvider.set(providerName, providerProxies)
     }
+
+    providerProxies.proxies.push(proxy)
   }
-  return truncatedProxies
+
+  return groupedProxies
 })
 </script>
 
 <template>
   <div class="flex flex-col gap-2">
     <div
-      v-for="({ providerName, proxies }, index) in truncatedProxies"
-      :key="index"
+      v-for="{ providerName, proxies } in groupedProxies"
+      :key="providerName || '__default_provider__'"
     >
       <p
         class="my-2 text-sm font-semibold"
@@ -92,6 +85,8 @@ const truncatedProxies = computed(() => {
           :name="node"
           :group-name="name"
           :active="node === now"
+          :auto-scroll-active="false"
+          :nested-scroll-surface="true"
           @click.stop="handlerProxySelect(name, node)"
         />
       </ProxyNodeGrid>

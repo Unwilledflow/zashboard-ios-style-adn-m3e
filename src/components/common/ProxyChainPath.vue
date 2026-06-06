@@ -7,12 +7,18 @@
     <div class="proxy-chain-path">
       <template v-if="collapsed">
         <span class="proxy-chain-node">
-          <ProxyName :name="proxy" />
+          <ProxyName
+            :name="proxy"
+            :filter="filter"
+          />
         </span>
         <template v-if="proxyNode?.now && showNowNode">
           <ChevronRightIcon class="proxy-chain-separator" />
           <span class="proxy-chain-node pointer-events-none">
-            <ProxyName :name="getNowProxyNodeName(proxy)" />
+            <ProxyName
+              :name="getNowProxyNodeName(proxy)"
+              :filter="filter"
+            />
           </span>
         </template>
       </template>
@@ -25,15 +31,20 @@
             class="proxy-chain-separator"
             v-if="index > 0"
           />
-          <span
+          <button
             class="proxy-chain-node"
             :class="{
               'proxy-chain-node-active': selected === chain,
             }"
+            :disabled="!interactive"
+            type="button"
             @click.stop="handleSelect(chain)"
           >
-            <ProxyName :name="chain" />
-          </span>
+            <ProxyName
+              :name="chain"
+              :filter="filter"
+            />
+          </button>
         </template>
         <template
           v-if="
@@ -47,7 +58,10 @@
             class="proxy-chain-node proxy-chain-node-terminal"
             @click.stop
           >
-            <ProxyName :name="getNowProxyNodeName(proxy)" />
+            <ProxyName
+              :name="getNowProxyNodeName(proxy)"
+              :filter="filter"
+            />
           </span>
         </template>
       </template>
@@ -84,6 +98,7 @@ const props = withDefaults(
     showNowNode?: boolean
     showLatency?: boolean
     interactive?: boolean
+    filter?: string
   }>(),
   {
     selected: '',
@@ -91,6 +106,7 @@ const props = withDefaults(
     showNowNode: false,
     showLatency: false,
     interactive: true,
+    filter: '',
   },
 )
 
@@ -137,16 +153,28 @@ const handleSelect = (chain: string) => {
 .proxy-chain-node {
   flex-shrink: 0;
   padding: 1px 10px;
+  border: 0;
   border-radius: 9999px;
   font-size: 0.75rem;
   line-height: 1.25rem;
+  color: inherit;
+  background: transparent;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
   white-space: nowrap;
 }
 
-.proxy-chain-node:hover {
+.proxy-chain-node:hover:not(:disabled) {
   background-color: color-mix(in srgb, var(--color-base-content) 8%, transparent);
+}
+
+.proxy-chain-node:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.proxy-chain-node:disabled {
+  cursor: default;
 }
 
 .proxy-chain-node-active {

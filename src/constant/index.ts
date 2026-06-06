@@ -84,6 +84,14 @@ export enum SPEEDTEST_MODE {
   DASHBOARD = 'dashboard',
 }
 
+export enum FOLDER_MODE {
+  AUTO = 'auto',
+  ON = 'on',
+  OFF = 'off',
+}
+
+export const FOLDER_MODE_AUTO_THRESHOLD = 20
+
 export enum CONNECTION_DISPLAY_STYLE {
   AUTO = 'auto',
   CARD = 'card',

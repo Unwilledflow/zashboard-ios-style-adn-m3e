@@ -3,14 +3,10 @@ import { renderRoutes } from '@/helper'
 import { i18n } from '@/i18n'
 import { language } from '@/store/settings'
 import { activeBackend } from '@/store/setup'
-import ConnectionsPage from '@/views/ConnectionsPage.vue'
+// HomePage is the shell (sidebar + dock) for every child route, so it must
+// remain part of the initial bundle. Every page underneath ships in its own
+// async chunk to keep the main-route payload small.
 import HomePage from '@/views/HomePage.vue'
-import LogsPage from '@/views/LogsPage.vue'
-import OverviewPage from '@/views/OverviewPage.vue'
-import ProxiesPage from '@/views/ProxiesPage.vue'
-import RulesPage from '@/views/RulesPage.vue'
-import SettingsPage from '@/views/SettingsPage.vue'
-import SetupPage from '@/views/SetupPage.vue'
 import { useTitle } from '@vueuse/core'
 import { watch } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
@@ -19,32 +15,32 @@ const childrenRouter = [
   {
     path: 'proxies',
     name: ROUTE_NAME.proxies,
-    component: ProxiesPage,
+    component: () => import('@/views/ProxiesPage.vue'),
   },
   {
     path: 'overview',
     name: ROUTE_NAME.overview,
-    component: OverviewPage,
+    component: () => import('@/views/OverviewPage.vue'),
   },
   {
     path: 'connections',
     name: ROUTE_NAME.connections,
-    component: ConnectionsPage,
+    component: () => import('@/views/ConnectionsPage.vue'),
   },
   {
     path: 'logs',
     name: ROUTE_NAME.logs,
-    component: LogsPage,
+    component: () => import('@/views/LogsPage.vue'),
   },
   {
     path: 'rules',
     name: ROUTE_NAME.rules,
-    component: RulesPage,
+    component: () => import('@/views/RulesPage.vue'),
   },
   {
     path: 'settings',
     name: ROUTE_NAME.settings,
-    component: SettingsPage,
+    component: () => import('@/views/SettingsPage.vue'),
   },
 ]
 
@@ -60,7 +56,7 @@ const router = createRouter({
     {
       path: '/setup',
       name: ROUTE_NAME.setup,
-      component: SetupPage,
+      component: () => import('@/views/SetupPage.vue'),
     },
     {
       path: '/:catchAll(.*)',
@@ -72,7 +68,9 @@ const router = createRouter({
 const title = useTitle('zashboard')
 const setTitleByName = (name: string | symbol | undefined) => {
   if (typeof name === 'string' && activeBackend.value) {
-    title.value = `zashboard | ${i18n.global.t(name)}`
+    const backend = activeBackend.value
+    const prefix = backend.label || `${backend.host}:${backend.port}`
+    title.value = `${prefix} | ${i18n.global.t(name)}`
   } else {
     title.value = 'zashboard'
   }
@@ -91,7 +89,7 @@ router.beforeEach((to, from) => {
   }
 
   if (!activeBackend.value && to.name !== ROUTE_NAME.setup) {
-    router.push({ name: ROUTE_NAME.setup })
+    return { name: ROUTE_NAME.setup }
   }
 })
 
@@ -99,7 +97,7 @@ router.afterEach((to) => {
   setTitleByName(to.name)
 })
 
-watch(language, () => {
+watch([language, activeBackend], () => {
   setTimeout(() => {
     setTitleByName(router.currentRoute.value.name)
   })

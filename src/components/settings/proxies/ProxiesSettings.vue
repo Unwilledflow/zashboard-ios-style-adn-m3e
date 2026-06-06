@@ -11,10 +11,19 @@
         >
           <div class="setting-item-label">
             {{ $t('speedtestMode') }}
-            <QuestionMarkCircleIcon
-              class="h-4 w-4"
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs btn-circle h-6 min-h-6 w-6"
+              :aria-label="$t('speedtestModeTip')"
+              :title="$t('speedtestModeTip')"
               @mouseenter="speedtestModeTip"
-            />
+              @focus="speedtestModeTip"
+            >
+              <QuestionMarkCircleIcon
+                class="h-4 w-4"
+                aria-hidden="true"
+              />
+            </button>
           </div>
           <select
             class="select select-sm min-w-24"
@@ -102,10 +111,19 @@
         >
           <div class="setting-item-label">
             {{ $t('independentLatencyTest') }}
-            <QuestionMarkCircleIcon
-              class="h-4 w-4"
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs btn-circle h-6 min-h-6 w-6"
+              :aria-label="$t('independentLatencyTestTip')"
+              :title="$t('independentLatencyTestTip')"
               @mouseenter="independentLatencyTestTip"
-            />
+              @focus="independentLatencyTestTip"
+            >
+              <QuestionMarkCircleIcon
+                class="h-4 w-4"
+                aria-hidden="true"
+              />
+            </button>
           </div>
           <input
             class="toggle"
@@ -121,6 +139,28 @@
         {{ $t('appearance') }}
       </div>
       <div class="settings-grid">
+        <div
+          v-if="isVisibleProxyFolderMode"
+          class="setting-item"
+        >
+          <div class="setting-item-label">
+            {{ $t('proxyFolderMode') }}
+          </div>
+          <select
+            class="select select-sm min-w-24"
+            v-model="proxyFolderMode"
+          >
+            <option :value="FOLDER_MODE.AUTO">
+              {{ $t('folderModeAuto') }}
+            </option>
+            <option :value="FOLDER_MODE.ON">
+              {{ $t('folderModeOn') }}
+            </option>
+            <option :value="FOLDER_MODE.OFF">
+              {{ $t('folderModeOff') }}
+            </option>
+          </select>
+        </div>
         <div
           v-if="isVisibleTwoColumnProxyGroup"
           class="setting-item"
@@ -257,7 +297,7 @@
 import { isSingBox } from '@/api'
 import { useIsSettingVisible } from '@/composables/settings'
 import { PROXIES_ITEM_KEYS } from '@/config/settingsItems'
-import { PROXY_CARD_SIZE, PROXY_PREVIEW_TYPE, SPEEDTEST_MODE } from '@/constant'
+import { FOLDER_MODE, PROXY_CARD_SIZE, PROXY_PREVIEW_TYPE, SPEEDTEST_MODE } from '@/constant'
 import { useTooltip } from '@/helper/tooltip'
 import { getMinCardWidth } from '@/helper/utils'
 import { proxyMap } from '@/store/proxies'
@@ -277,6 +317,7 @@ import {
   speedtestTimeout,
   speedtestUrl,
   truncateProxyName,
+  proxyFolderMode,
   twoColumnProxyGroup,
 } from '@/store/settings'
 import { QuestionMarkCircleIcon } from '@heroicons/vue/24/outline'
@@ -296,6 +337,7 @@ const isVisibleIpv6Test = useIsSettingVisible(k.ipv6Test)
 const isVisibleIndependentLatencyTest = useIsSettingVisible(k.independentLatencyTest)
 const isVisibleGroupTestUrls = useIsSettingVisible(k.groupTestUrls)
 const isVisibleTwoColumnProxyGroup = useIsSettingVisible(k.twoColumnProxyGroup)
+const isVisibleProxyFolderMode = useIsSettingVisible(k.proxyFolderMode)
 const isVisibleTruncateProxyName = useIsSettingVisible(k.truncateProxyName)
 const isVisibleDisplayGlobalByMode = useIsSettingVisible(k.displayGlobalByMode)
 const isVisibleCustomGlobalNode = useIsSettingVisible(k.customGlobalNode)
@@ -334,6 +376,7 @@ const hasVisibleLatencyItems = computed(() => {
 const hasVisibleProxyStyleItems = computed(() => {
   return (
     isVisibleTwoColumnProxyGroup.value ||
+    isVisibleProxyFolderMode.value ||
     isVisibleTruncateProxyName.value ||
     isVisibleDisplayGlobalByMode.value ||
     (displayGlobalByMode.value && isSingBox.value && isVisibleCustomGlobalNode.value) ||

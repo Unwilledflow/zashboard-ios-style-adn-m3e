@@ -3,6 +3,8 @@
     <button
       v-if="beforeClose && clearable"
       class="btn btn-ghost btn-circle btn-xs absolute top-1/2 right-1 z-10 h-5 min-h-5 w-5 -translate-y-1/2 p-0"
+      :aria-label="$t('reset')"
+      type="button"
       @click="clearInput"
     >
       <XMarkIcon class="h-3 w-3" />
@@ -11,7 +13,7 @@
       v-model="inputValue"
       ref="inputRef"
       type="text"
-      :class="['input input-sm join-item w-full', inputClass, { 'pr-6': clearable }]"
+      :class="['input input-sm w-full', inputClass, { 'pr-6': clearable }]"
       :placeholder="placeholder || ''"
       :name="name || ''"
       :autocomplete="autocomplete || ''"
@@ -22,6 +24,8 @@
     <button
       v-if="!beforeClose && clearable"
       class="btn btn-ghost btn-circle btn-xs absolute top-1/2 right-1 h-5 min-h-5 w-5 -translate-y-1/2 p-0"
+      :aria-label="$t('reset')"
+      type="button"
       @click="clearInput"
     >
       <XMarkIcon class="h-3 w-3" />
@@ -63,22 +67,12 @@ const handlerSearchInputClick = (e: Event) => {
     return
   }
   const PopContent = defineComponent({
-    props: {
-      menus: {
-        type: Array,
-        default: () => [],
-      },
-      menusDeleteable: {
-        type: Boolean,
-        default: false,
-      },
-    },
-    setup(props: { menus: string[]; menusDeleteable: boolean }) {
+    setup() {
       return () =>
         h(
           'div',
           { class: 'max-h-64 overflow-y-auto overflow-x-hidden scrollbar-hidden min-w-24 py-1' },
-          props.menus.map((item) =>
+          (props.menus ?? []).map((item) =>
             h(
               'div',
               {
@@ -101,14 +95,13 @@ const handlerSearchInputClick = (e: Event) => {
                 props.menusDeleteable &&
                   h(XMarkIcon, {
                     class: 'h-3 w-3 transition-transform hover:scale-125',
-                    onClick: (e) => {
-                      const target = e.target as HTMLElement
+                    onClick: () => {
+                      const nextMenus = (props.menus ?? []).filter((menu) => menu !== item)
 
-                      emits(
-                        'update:menus',
-                        props.menus.filter((menu) => menu !== item),
-                      )
-                      target.closest('div')?.remove()
+                      emits('update:menus', nextMenus)
+                      if (!nextMenus.length) {
+                        hideTip()
+                      }
                     },
                   }),
               ],
@@ -118,10 +111,7 @@ const handlerSearchInputClick = (e: Event) => {
     },
   })
   const mountEl = document.createElement('div')
-  const app = createApp(PopContent, {
-    menus: props.menus,
-    menusDeleteable: props.menusDeleteable,
-  })
+  const app = createApp(PopContent)
 
   app.mount(mountEl)
 
@@ -132,6 +122,10 @@ const handlerSearchInputClick = (e: Event) => {
     interactive: true,
     appendTo: document.body,
     arrow: false,
+    // Mirror RuleCard: dispose the inline Vue app when tippy closes the menu.
+    onHidden: () => {
+      app.unmount()
+    },
   })
 }
 </script>

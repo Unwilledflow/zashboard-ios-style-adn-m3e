@@ -1,7 +1,7 @@
 <template>
   <div
     ref="parentRef"
-    class="base-container m-3 h-full overflow-auto backdrop-blur-none!"
+    class="base-container m-3 h-full overflow-auto"
     :class="{
       'select-none': isDragging,
     }"
@@ -22,9 +22,7 @@
           }
         "
       >
-        <thead
-          class="bg-base-100 border-base-300/60 sticky top-0 z-10 border-b backdrop-blur-none!"
-        >
+        <thead class="bg-base-100 sticky top-0 z-10">
           <tr
             v-for="headerGroup in tanstackTable.getHeaderGroups()"
             :key="headerGroup.id"
@@ -41,12 +39,24 @@
                   header.column.getIsPinned() === 'left' &&
                   'pinned-td sticky left-0 z-20',
               ]"
+              :tabindex="header.column.getCanSort() ? 0 : undefined"
+              :aria-sort="
+                header.column.getIsSorted() === 'asc'
+                  ? 'ascending'
+                  : header.column.getIsSorted() === 'desc'
+                    ? 'descending'
+                    : header.column.getCanSort()
+                      ? 'none'
+                      : undefined
+              "
               :style="[
                 isManualTable && {
                   width: `${header.getSize()}px`,
                 },
               ]"
               @click="header.column.getToggleSortingHandler()?.($event)"
+              @keydown.enter.prevent="header.column.getToggleSortingHandler()?.($event)"
+              @keydown.space.prevent="header.column.getToggleSortingHandler()?.($event)"
             >
               <div class="flex items-center gap-1">
                 <FlexRender
@@ -57,25 +67,35 @@
                 </FlexRender>
                 <ArrowUpCircleIcon
                   class="h-4 w-4"
+                  aria-hidden="true"
                   v-if="header.column.getIsSorted() === 'asc'"
                 />
                 <ArrowDownCircleIcon
                   class="h-4 w-4"
+                  aria-hidden="true"
                   v-if="header.column.getIsSorted() === 'desc'"
                 />
                 <div>
                   <button
                     v-if="header.column.getCanGroup()"
+                    type="button"
                     class="btn btn-xs btn-circle btn-ghost"
+                    :aria-label="
+                      header.column.getIsGrouped()
+                        ? $t('ungroupColumn', { name: $t(header.column.id) })
+                        : $t('groupByColumn', { name: $t(header.column.id) })
+                    "
                     @click.stop="() => header.column.getToggleGroupingHandler()()"
                   >
                     <MagnifyingGlassMinusIcon
                       v-if="header.column.getIsGrouped()"
                       class="h-4 w-4"
+                      aria-hidden="true"
                     />
                     <MagnifyingGlassPlusIcon
                       v-else
                       class="h-4 w-4"
+                      aria-hidden="true"
                     />
                   </button>
                   <button
@@ -83,16 +103,24 @@
                       header.column.id === CONNECTIONS_TABLE_ACCESSOR_KEY.Host ||
                       header.column.id === CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost
                     "
+                    type="button"
                     class="btn btn-xs btn-circle btn-ghost"
+                    :aria-label="
+                      header.column.getIsPinned() === 'left'
+                        ? $t('unpinColumn', { name: $t(header.column.id) })
+                        : $t('pinColumn', { name: $t(header.column.id) })
+                    "
                     @click.stop="() => handlePinColumn(header.column)"
                   >
                     <MapPinIcon
                       v-if="header.column.getIsPinned() !== 'left'"
                       class="h-4 w-4"
+                      aria-hidden="true"
                     />
                     <XMarkIcon
                       v-else
                       class="h-4 w-4"
+                      aria-hidden="true"
                     />
                   </button>
                 </div>
@@ -112,14 +140,25 @@
           <tr v-if="rows.length === 0">
             <td
               :colspan="tanstackTable.getVisibleLeafColumns().length"
-              class="text-base-content/50 h-90"
+              class="h-90"
             >
-              <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-                <CircleStackIcon class="h-10 w-10 opacity-60" />
-                <div class="space-y-1">
-                  <div class="text-base font-medium">{{ t('noData') }}</div>
-                </div>
-              </div>
+              <EmptyState
+                :icon="ArrowsRightLeftIcon"
+                :title="
+                  $t(
+                    connectionTabShow === CONNECTION_TAB_TYPE.ACTIVE
+                      ? 'noConnections'
+                      : 'noClosedConnections',
+                  )
+                "
+                :description="
+                  $t(
+                    connectionTabShow === CONNECTION_TAB_TYPE.ACTIVE
+                      ? 'noConnectionsDesc'
+                      : 'noClosedConnectionsDesc',
+                  )
+                "
+              />
             </td>
           </tr>
           <tr
@@ -129,12 +168,16 @@
               height: `${virtualRow.size}px`,
               transform: `translateY(${virtualRow.start - index * virtualRow.size}px)`,
             }"
-            class="hover:bg-primary! hover:text-primary-content!"
+            class="connection-row hover:bg-base-content/[0.04]"
             :class="[
               virtualRow.index % 2 === 0 ? 'bg-base-150' : 'bg-base-100',
               !isDragging ? 'cursor-pointer' : 'cursor-grabbing',
             ]"
+            role="button"
+            tabindex="0"
             @click="handlerClickRow(rows[virtualRow.index])"
+            @keydown.enter.prevent="handleRowKeydown($event, rows[virtualRow.index])"
+            @keydown.space.prevent="handleRowKeydown($event, rows[virtualRow.index])"
           >
             <td
               v-for="cell in rows[virtualRow.index].getVisibleCells()"
@@ -205,6 +248,7 @@
 
 <script setup lang="ts">
 import { blockConnectionByIdAPI, disconnectByIdAPI } from '@/api'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useConnections } from '@/composables/connections'
 import {
   CONNECTION_TAB_TYPE,
@@ -213,19 +257,10 @@ import {
   TABLE_SIZE,
   TABLE_WIDTH_MODE,
 } from '@/constant'
-import {
-  getDestinationFromConnection,
-  getDestinationTypeFromConnection,
-  getHostFromConnection,
-  getInboundUserFromConnection,
-  getNetworkTypeFromConnection,
-  getProcessFromConnection,
-} from '@/helper'
+import { getConnectionDisplayValue } from '@/helper/connection'
 import { backgroundImage } from '@/helper/indexeddb'
 import { showNotification } from '@/helper/notification'
-import { getIPLabelFromMap } from '@/helper/sourceip'
-import { fromNow, prettyBytesHelper } from '@/helper/utils'
-import { connectionTabShow, renderConnections } from '@/store/connections'
+import { connectionFilter, connectionTabShow, renderConnections } from '@/store/connections'
 import {
   connectionTableColumns,
   proxyChainDirection,
@@ -238,7 +273,7 @@ import {
   ArrowDownCircleIcon,
   ArrowRightCircleIcon,
   ArrowUpCircleIcon,
-  CircleStackIcon,
+  ArrowsRightLeftIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
   MapPinIcon,
@@ -265,8 +300,9 @@ import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useStorage } from '@vueuse/core'
 import dayjs from 'dayjs'
 import { twMerge } from 'tailwind-merge'
-import { computed, h, ref, type VNode } from 'vue'
+import { computed, h, onBeforeUnmount, ref, type VNode } from 'vue'
 import { useI18n } from 'vue-i18n'
+import HighlightText from '../common/HighlightText.vue'
 import ProxyName from '../proxies/ProxyName.vue'
 const { handlerInfo } = useConnections()
 const columnWidthMap = useStorage('config/table-column-width', {
@@ -290,6 +326,23 @@ const columnWidthMap = useStorage('config/table-column-width', {
 
 const isManualTable = computed(() => tableWidthMode.value === TABLE_WIDTH_MODE.MANUAL)
 const { t } = useI18n()
+const getTableDisplayValue = (connection: Connection, key: CONNECTIONS_TABLE_ACCESSOR_KEY) => {
+  return getConnectionDisplayValue(connection, key, {
+    mode: 'table',
+    proxyChainDirection: proxyChainDirection.value,
+    showFullProxyChain: showFullProxyChain.value,
+  })
+}
+
+const highlightedCell =
+  (key: CONNECTIONS_TABLE_ACCESSOR_KEY) =>
+  ({ row }: { row: Row<Connection> }) => {
+    return h(HighlightText, {
+      text: getTableDisplayValue(row.original, key),
+      filter: connectionFilter.value,
+    })
+  }
+
 const columns: ColumnDef<Connection>[] = [
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Close),
@@ -300,16 +353,19 @@ const columns: ColumnDef<Connection>[] = [
         'button',
         {
           class: 'btn btn-xs btn-circle',
+          'aria-label': t('disconnectConnection'),
+          title: t('disconnectConnection'),
           onClick: (e) => {
             const connection = row.original
 
             e.stopPropagation()
-            disconnectByIdAPI(connection.id)
+            void disconnectByIdAPI(connection.id).catch(() => {})
           },
         },
         [
           h(XMarkIcon, {
             class: 'h-4 w-4',
+            'aria-hidden': 'true',
           }),
         ],
       )
@@ -319,16 +375,19 @@ const columns: ColumnDef<Connection>[] = [
           'button',
           {
             class: 'btn btn-xs btn-circle',
+            'aria-label': t('blockConnection'),
+            title: t('blockConnection'),
             onClick: (e) => {
               const connection = row.original
 
               e.stopPropagation()
-              blockConnectionByIdAPI(connection.id)
+              void blockConnectionByIdAPI(connection.id).catch(() => {})
             },
           },
           [
             h(NoSymbolIcon, {
               class: 'h-4 w-4',
+              'aria-hidden': 'true',
             }),
           ],
         )
@@ -342,39 +401,39 @@ const columns: ColumnDef<Connection>[] = [
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Type),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Type,
-    accessorFn: getNetworkTypeFromConnection,
+    accessorFn: (original) => getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Type),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Type),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Process),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Process,
-    accessorFn: getProcessFromConnection,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Process),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Process),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Host),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Host,
-    accessorFn: getHostFromConnection,
+    accessorFn: (original) => getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Host),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Host),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost,
-    accessorFn: (original) => original.metadata.sniffHost || '-',
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Rule),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Rule,
-    accessorFn: (original) =>
-      !original.rulePayload ? original.rule : `${original.rule}: ${original.rulePayload}`,
+    accessorFn: (original) => getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Rule),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Rule),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Chains),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Chains,
-    accessorFn: (original) => {
-      const chains = [...original.chains]
-
-      return proxyChainDirection.value === PROXY_CHAIN_DIRECTION.REVERSE
-        ? chains.join(' → ')
-        : chains.reverse().join(' → ')
-    },
+    accessorFn: (original) => getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Chains),
     cell: ({ row }) => {
       const chains: VNode[] = []
       const isReverse = proxyChainDirection.value === PROXY_CHAIN_DIRECTION.REVERSE
@@ -386,7 +445,7 @@ const columns: ColumnDef<Connection>[] = [
 
       // 完整显示所有代理链
       originChains.forEach((chain, index) => {
-        chains.unshift(h(ProxyName, { name: chain, key: chain }))
+        chains.unshift(h(ProxyName, { name: chain, key: chain, filter: connectionFilter.value }))
 
         if (index < originChains.length - 1) {
           chains.unshift(
@@ -410,16 +469,19 @@ const columns: ColumnDef<Connection>[] = [
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Outbound),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Outbound,
-    accessorFn: (original) => original.chains[0],
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Outbound),
     cell: ({ row }) => {
-      return h(ProxyName, { name: row.original.chains[0] })
+      return h(ProxyName, { name: row.original.chains[0], filter: connectionFilter.value })
     },
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime),
     enableGrouping: false,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime,
-    accessorFn: (original) => fromNow(original.start),
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime),
     sortingFn: (prev, next) =>
       dayjs(next.original.start).valueOf() - dayjs(prev.original.start).valueOf(),
   },
@@ -428,7 +490,9 @@ const columns: ColumnDef<Connection>[] = [
     enableGrouping: false,
     sortDescFirst: true,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed,
-    accessorFn: (original) => `${prettyBytesHelper(original.downloadSpeed)}/s`,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed),
     sortingFn: (prev, next) => prev.original.downloadSpeed - next.original.downloadSpeed,
   },
   {
@@ -436,7 +500,9 @@ const columns: ColumnDef<Connection>[] = [
     enableGrouping: false,
     sortDescFirst: true,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed,
-    accessorFn: (original) => `${prettyBytesHelper(original.uploadSpeed)}/s`,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed),
     sortingFn: (prev, next) => prev.original.uploadSpeed - next.original.uploadSpeed,
   },
   {
@@ -444,7 +510,9 @@ const columns: ColumnDef<Connection>[] = [
     enableGrouping: false,
     sortDescFirst: true,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Download,
-    accessorFn: (original) => prettyBytesHelper(original.download),
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Download),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Download),
     sortingFn: (prev, next) => prev.original.download - next.original.download,
   },
   {
@@ -452,40 +520,51 @@ const columns: ColumnDef<Connection>[] = [
     enableGrouping: false,
     sortDescFirst: true,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Upload,
-    accessorFn: (original) => prettyBytesHelper(original.upload),
+    accessorFn: (original) => getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Upload),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Upload),
     sortingFn: (prev, next) => prev.original.upload - next.original.upload,
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.SourceIP),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.SourceIP,
-    accessorFn: (original) => {
-      return getIPLabelFromMap(original.metadata.sourceIP)
-    },
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.SourceIP),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.SourceIP),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.SourcePort),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.SourcePort,
-    accessorFn: (original) => original.metadata.sourcePort,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.SourcePort),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.SourcePort),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.Destination),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Destination,
-    accessorFn: getDestinationFromConnection,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.Destination),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.Destination),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.DestinationType),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.DestinationType,
-    accessorFn: getDestinationTypeFromConnection,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.DestinationType),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.DestinationType),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.RemoteAddress),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.RemoteAddress,
-    accessorFn: (original) => original.metadata.remoteDestination || '-',
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.RemoteAddress),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.RemoteAddress),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser),
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser,
-    accessorFn: getInboundUserFromConnection,
+    accessorFn: (original) =>
+      getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser),
+    cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser),
   },
 ]
 
@@ -609,13 +688,7 @@ const sizeOfTable = computed(() => {
 })
 
 const inheritedStyle = computed(() => {
-  const baseStyle = 'bg-inherit'
-
-  if (!backgroundImage.value) {
-    return baseStyle
-  }
-
-  return `${baseStyle} backdrop-blur-sm`
+  return backgroundImage.value ? 'bg-inherit glass-surface' : 'bg-inherit'
 })
 
 const handlerClickRow = (row: Row<Connection>) => {
@@ -628,6 +701,11 @@ const handlerClickRow = (row: Row<Connection>) => {
   } else {
     handlerInfo(row.original)
   }
+}
+
+const handleRowKeydown = (e: KeyboardEvent, row: Row<Connection>) => {
+  if (e.target !== e.currentTarget) return
+  handlerClickRow(row)
 }
 
 const handlePinColumn = (column: Column<Connection, unknown>) => {
@@ -649,44 +727,95 @@ const handlePinColumn = (column: Column<Connection, unknown>) => {
 }
 
 const isDragging = ref(false)
-const isMouseDown = ref(false)
 const DRAG_THRESHOLD = Math.pow(3, 2)
+let isMouseDown = false
+let dragStartX = 0
+let dragStartY = 0
+let pendingScrollX = 0
+let pendingScrollY = 0
+let dragScrollFrame: number | undefined
+let resetDraggingTimer: ReturnType<typeof setTimeout> | undefined
+
+const flushDragScroll = () => {
+  dragScrollFrame = undefined
+  if (!parentRef.value) return
+
+  parentRef.value.scrollLeft -= pendingScrollX
+  parentRef.value.scrollTop -= pendingScrollY
+  pendingScrollX = 0
+  pendingScrollY = 0
+}
+
+const scheduleDragScroll = () => {
+  if (dragScrollFrame !== undefined) return
+  dragScrollFrame = requestAnimationFrame(flushDragScroll)
+}
 
 const handleMouseDown = (e: MouseEvent) => {
   if (e.button !== 0) return // 只处理左键
-  isMouseDown.value = true
+  isMouseDown = true
+  dragStartX = e.clientX
+  dragStartY = e.clientY
+  pendingScrollX = 0
+  pendingScrollY = 0
+  if (resetDraggingTimer) {
+    clearTimeout(resetDraggingTimer)
+    resetDraggingTimer = undefined
+  }
   e.preventDefault()
 }
 
 const handleMouseMove = (e: MouseEvent) => {
-  if (!isMouseDown.value || !parentRef.value) return
+  if (!isMouseDown || !parentRef.value) return
 
   const deltaX = e.movementX
   const deltaY = e.movementY
 
   // 检查是否超过拖动阈值
-  if (!isDragging.value && Math.pow(deltaX, 2) + Math.pow(deltaY, 2) > DRAG_THRESHOLD) {
+  if (!isDragging.value) {
+    const totalX = e.clientX - dragStartX
+    const totalY = e.clientY - dragStartY
+
+    if (Math.pow(totalX, 2) + Math.pow(totalY, 2) <= DRAG_THRESHOLD) {
+      return
+    }
+
     isDragging.value = true
   }
 
-  if (isDragging.value) {
-    parentRef.value.scrollLeft -= deltaX
-    parentRef.value.scrollTop -= deltaY
-    e.preventDefault()
-  }
+  pendingScrollX += deltaX
+  pendingScrollY += deltaY
+  scheduleDragScroll()
+  e.preventDefault()
 }
 
 const handleMouseUp = () => {
+  isMouseDown = false
+
+  if (dragScrollFrame !== undefined) {
+    cancelAnimationFrame(dragScrollFrame)
+    flushDragScroll()
+  }
+
   // 延迟重置拖动状态，以防止在拖动结束后立即触发点击事件
   if (isDragging.value) {
-    setTimeout(() => {
+    resetDraggingTimer = setTimeout(() => {
       isDragging.value = false
+      resetDraggingTimer = undefined
     }, 100)
   }
-  isMouseDown.value = false
 }
 
 // 复制功能
+onBeforeUnmount(() => {
+  if (dragScrollFrame !== undefined) {
+    cancelAnimationFrame(dragScrollFrame)
+  }
+  if (resetDraggingTimer) {
+    clearTimeout(resetDraggingTimer)
+  }
+})
+
 const copyToClipboard = async (text: string) => {
   try {
     await navigator.clipboard.writeText(text)

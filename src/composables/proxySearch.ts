@@ -1,4 +1,5 @@
 import { PROXY_SEARCH_MODE, PROXY_TAB_TYPE } from '@/constant'
+import { toSearchRegex } from '@/helper/search'
 import { proxiesFilter, proxiesTabShow, proxyMap, proxyProviederList } from '@/store/proxies'
 import { proxyProviderSearchMode, proxySearchMode } from '@/store/settings'
 import { computed } from 'vue'
@@ -25,7 +26,7 @@ export const matchProxySearchKeyword = (name: string, keyword = proxySearchKeywo
     return true
   }
 
-  return toRegex(normalizedKeyword)?.test(name) ?? true
+  return toSearchRegex(normalizedKeyword)?.test(name) ?? true
 }
 
 export const proxyGroupContainsMatchingNode = (groupName: string) => {
@@ -35,12 +36,4 @@ export const proxyGroupContainsMatchingNode = (groupName: string) => {
 export const proxyProviderContainsMatchingNode = (providerName: string) => {
   const provider = proxyProviederList.value.find((p) => p.name === providerName)
   return provider?.proxies.some((node) => matchProxySearchKeyword(node.name)) ?? false
-}
-
-const toRegex = (filter: string) => {
-  try {
-    return new RegExp(filter, 'i')
-  } catch {
-    return null
-  }
 }
