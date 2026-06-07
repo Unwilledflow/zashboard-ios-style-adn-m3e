@@ -1,12 +1,21 @@
 import { disconnectByIdAPI, fetchConnectionsAPI } from '@/api'
 import { CONNECTION_TAB_TYPE, SORT_DIRECTION, SORT_TYPE } from '@/constant'
 import { getChainsStringFromConnection, getInboundUserFromConnection } from '@/helper'
+import { getConnectionVisibleSearchValues } from '@/helper/connection'
 import { toSearchRegex } from '@/helper/search'
 import type { Connection, ConnectionRawMessage } from '@/types'
 import { useStorage } from '@vueuse/core'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { initAggregatedDataMap, saveConnectionHistory } from './connHistory'
-import { autoDisconnectIdleUDP, autoDisconnectIdleUDPTime, isConnectionCard } from './settings'
+import {
+  autoDisconnectIdleUDP,
+  autoDisconnectIdleUDPTime,
+  connectionCardLines,
+  connectionTableColumns,
+  isConnectionCard,
+  proxyChainDirection,
+  showFullProxyChain,
+} from './settings'
 import { activeBackend } from './setup'
 
 export const connectionTabShow = ref(CONNECTION_TAB_TYPE.ACTIVE)
@@ -303,6 +312,14 @@ export const renderConnections = computed(() => {
   const searchRegex = connectionFilter.value ? toSearchRegex(connectionFilter.value) : null
   const hideRegex = quickFilterEnabled.value ? toSearchRegex(quickFilterRegex.value) : null
   const sourceIPFilterSet = sourceIPFilter.value === null ? null : new Set(sourceIPFilter.value)
+  const displayOptions = {
+    mode: isConnectionCard.value ? ('card' as const) : ('table' as const),
+    proxyChainDirection: proxyChainDirection.value,
+    showFullProxyChain: showFullProxyChain.value,
+  }
+  const visibleKeys = isConnectionCard.value
+    ? connectionCardLines.value.flat()
+    : connectionTableColumns.value
 
   const shouldFilter = sourceIPFilterSet !== null || searchRegex !== null || hideRegex !== null
   const filteredConnections = shouldFilter
@@ -315,14 +332,14 @@ export const renderConnections = computed(() => {
           return true
         }
 
-        const searchFields = ensureConnectionDerivedData(conn).searchFields
+        const visibleValues = getConnectionVisibleSearchValues(conn, visibleKeys, displayOptions)
 
-        if (hideRegex && hideRegex.testAny(searchFields)) {
+        if (hideRegex && hideRegex.testAny(visibleValues)) {
           return false
         }
 
         if (searchRegex) {
-          return searchRegex.testAny(searchFields)
+          return searchRegex.testAny(visibleValues)
         }
 
         return true

@@ -3,7 +3,7 @@
     <button
       class="btn btn-circle btn-sm touch-target"
       :aria-label="$t('backendSelector')"
-      @click="showBackendSelectorDialog = true"
+      @click="showBackendSettingsDialog = true"
       @mouseenter="handlerMouseenterBackendSelector"
     >
       <ServerIcon
@@ -25,7 +25,7 @@
   </div>
 
   <DialogWrapper
-    v-model="showBackendSelectorDialog"
+    v-model="showBackendSettingsDialog"
     box-class="max-w-173"
     no-padding
   >
@@ -41,13 +41,12 @@ import BackendSettings from '@/components/settings/backend/BackendSettings.vue'
 import { useTooltip } from '@/helper/tooltip'
 import { getLabelFromBackend } from '@/helper/utils'
 import { isSidebarCollapsed } from '@/store/settings'
-import { activeBackend } from '@/store/setup'
+import { activeBackend, showBackendSettingsDialog } from '@/store/setup'
 import { ArrowLeftCircleIcon, ArrowRightCircleIcon, ServerIcon } from '@heroicons/vue/24/outline'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 
 const { showTip } = useTooltip()
 
-const showBackendSelectorDialog = ref(false)
 const props = defineProps<{
   vertical?: boolean
 }>()

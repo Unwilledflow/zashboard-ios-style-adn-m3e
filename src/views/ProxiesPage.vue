@@ -1,7 +1,7 @@
 <template>
   <div
     class="flex h-full w-full flex-col"
-    :style="padding"
+    :style="pagePaddingStyle"
     :class="[disableProxiesPageTextSelect ? 'select-none' : '']"
   >
     <ProxiesCtrl />
@@ -24,10 +24,7 @@
           />
         </template>
         <template v-else-if="displayTwoColumns">
-          <div
-            class="grid grid-cols-2 gap-3 p-3 md:pr-1"
-            :style="contentPaddingStyle"
-          >
+          <div class="grid grid-cols-2 gap-3 p-3 md:pr-1">
             <div
               v-for="idx in [0, 1]"
               :key="idx"
@@ -44,7 +41,6 @@
         </template>
         <div
           class="grid grid-cols-1 gap-3 p-3 md:pr-1"
-          :style="contentPaddingStyle"
           v-else
         >
           <component
@@ -82,15 +78,15 @@ import { folderManagerOpen, isProxyFolderModeActive } from '@/store/proxyFolders
 import { useSessionStorage } from '@vueuse/core'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-const { padding, paddingBottom } = usePaddingForViews({
+const { paddingTop, paddingBottom } = usePaddingForViews({
   offsetTop: 0,
   offsetBottom: 0,
 })
+const pagePaddingStyle = computed(() => ({
+  paddingTop: isMiddleScreen.value ? `${paddingTop.value}px` : undefined,
+}))
 const scrollPaddingStyle = computed(() => ({
   scrollPaddingBottom: `${paddingBottom.value}px`,
-}))
-const contentPaddingStyle = computed(() => ({
-  paddingBottom: isMiddleScreen.value ? `${paddingBottom.value + 12}px` : undefined,
 }))
 const renderPageItems = renderProxiesPageItems
 const proxiesRef = ref()

@@ -2,7 +2,7 @@ import { renderRoutes } from '@/helper'
 import { showNotification } from '@/helper/notification'
 import { getLabelFromBackend } from '@/helper/utils'
 import { isSidebarCollapsed, keyboardShortcuts } from '@/store/settings'
-import { activeBackend, switchActiveBackend } from '@/store/setup'
+import { activeBackend, switchActiveBackend, toggleBackendSettingsDialog } from '@/store/setup'
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -10,6 +10,7 @@ export enum KEYBOARD_SHORTCUT_ACTION {
   TOGGLE_SIDEBAR = 'sidebar:toggle',
   BACKEND_PREVIOUS = 'backend:previous',
   BACKEND_NEXT = 'backend:next',
+  BACKEND_OPEN_SETTINGS = 'backend:open-settings',
   PAGE_1 = 'page:1',
   PAGE_2 = 'page:2',
   PAGE_3 = 'page:3',
@@ -50,6 +51,10 @@ export const KEYBOARD_SHORTCUTS = {
   [KEYBOARD_SHORTCUT_ACTION.BACKEND_NEXT]: {
     defaultKey: 'N',
     label: 'switchToNextBackend',
+  },
+  [KEYBOARD_SHORTCUT_ACTION.BACKEND_OPEN_SETTINGS]: {
+    defaultKey: 'S',
+    label: 'openBackendSettings',
   },
   [KEYBOARD_SHORTCUT_ACTION.PAGE_1]: {
     defaultKey: '1',
@@ -189,7 +194,6 @@ export const useKeyboard = () => {
     const target = event.target as HTMLElement | null
     if (
       target instanceof HTMLInputElement ||
-      target instanceof HTMLSelectElement ||
       target instanceof HTMLTextAreaElement ||
       target?.isContentEditable
     ) {
@@ -208,13 +212,17 @@ export const useKeyboard = () => {
       return
     }
 
-    if (action === KEYBOARD_SHORTCUT_ACTION.BACKEND_PREVIOUS) {
+    if (
+      action === KEYBOARD_SHORTCUT_ACTION.BACKEND_PREVIOUS ||
+      action === KEYBOARD_SHORTCUT_ACTION.BACKEND_NEXT
+    ) {
       if (!activeBackend.value) {
         return
       }
 
       event.preventDefault()
-      const backend = switchActiveBackend(-1)
+      const direction = action === KEYBOARD_SHORTCUT_ACTION.BACKEND_NEXT ? 1 : -1
+      const backend = switchActiveBackend(direction)
       if (backend) {
         showNotification({
           content: 'backendSwitchTo',
@@ -227,22 +235,9 @@ export const useKeyboard = () => {
       return
     }
 
-    if (action === KEYBOARD_SHORTCUT_ACTION.BACKEND_NEXT) {
-      if (!activeBackend.value) {
-        return
-      }
-
+    if (action === KEYBOARD_SHORTCUT_ACTION.BACKEND_OPEN_SETTINGS) {
       event.preventDefault()
-      const backend = switchActiveBackend(1)
-      if (backend) {
-        showNotification({
-          content: 'backendSwitchTo',
-          params: {
-            backend: getLabelFromBackend(backend),
-          },
-          type: 'alert-success',
-        })
-      }
+      toggleBackendSettingsDialog()
       return
     }
 
