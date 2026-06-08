@@ -4,9 +4,29 @@
     :class="cardClass"
     @contextmenu.stop.prevent="handlerLatencyTest"
   >
+    <button
+      v-if="nodeFolderSelectable"
+      type="button"
+      class="node-folder-toggle"
+      :class="nodeFolderActive ? 'is-active' : ''"
+      :aria-label="nodeFolderActive ? t('folder_remove_node') : t('folder_add_node')"
+      :title="nodeFolderActive ? t('folder_remove_node') : t('folder_add_node')"
+      @click.stop="$emit('toggleNodeFolder')"
+    >
+      <CheckCircleIcon
+        v-if="nodeFolderActive"
+        class="h-3.5 w-3.5"
+        aria-hidden="true"
+      />
+      <PlusCircleIcon
+        v-else
+        class="h-3.5 w-3.5"
+        aria-hidden="true"
+      />
+    </button>
     <div
       class="w-full flex-1 text-sm"
-      :class="truncateProxyName && 'truncate'"
+      :class="[truncateProxyName && 'truncate', nodeFolderSelectable && 'pr-6']"
       @mouseenter="checkTruncation"
     >
       <ProxyIcon
@@ -47,25 +67,41 @@
 import { PROXY_CARD_SIZE, PROXY_SORT_TYPE } from '@/constant'
 import { checkTruncation } from '@/helper/tooltip'
 import { scrollIntoCenter } from '@/helper/utils'
+import { i18n } from '@/i18n'
 import { getIPv6ByName, getTestUrl, proxyLatencyTest, proxyMap } from '@/store/proxies'
 import { IPv6test, proxyCardSize, proxySortType, truncateProxyName } from '@/store/settings'
 import { smartWeightsMap } from '@/store/smart'
-import { twMerge } from 'tailwind-merge'
+import { CheckCircleIcon, PlusCircleIcon } from '@heroicons/vue/24/outline'
 import { computed, onBeforeUnmount, onUnmounted, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
 import LatencyTag from './LatencyTag.vue'
 import ProxyIcon from './ProxyIcon.vue'
 
-const { t } = useI18n()
+const t = i18n.global.t
 const props = defineProps<{
   name: string
   active?: boolean
   groupName?: string
   autoScrollActive?: boolean
   nestedScrollSurface?: boolean
+  nodeFolderSelectable?: boolean
+  nodeFolderActive?: boolean
 }>()
+defineEmits<{ (e: 'toggleNodeFolder'): void }>()
 
 const formattedProxyTypeCache = new Map<string, string>()
+const BASE_CARD_CLASS =
+  'group relative flex cursor-pointer flex-col items-start rounded-2xl border border-transparent'
+const DEFAULT_INTERACTION_CLASS = 'active:scale-[0.98]'
+const ACTIVE_DEFAULT_CARD_CLASS =
+  'bg-primary text-primary-content shadow-ios-card sm:hover:bg-primary/95'
+const ACTIVE_NESTED_CARD_CLASS = 'bg-primary text-primary-content'
+const NESTED_CARD_CLASS = 'bg-base-200/80'
+const DEFAULT_CARD_CLASS = 'glass-surface hover:border-base-content/10 sm:hover:bg-base-200'
+const NESTED_TRANSITION_CLASS = ''
+const DEFAULT_TRANSITION_CLASS =
+  'transition-[background-color,transform,box-shadow,border-color] duration-200 ease-out'
+const SMALL_CARD_CLASS = 'gap-1 p-2'
+const LARGE_CARD_CLASS = 'gap-2 p-3'
 const cardRef = ref()
 const node = computed(() => proxyMap.value[props.name])
 const isLatencyTesting = ref(false)
@@ -83,25 +119,28 @@ const typeFormatter = (type: string) => {
   return formatted
 }
 const isSmallCard = computed(() => proxyCardSize.value === PROXY_CARD_SIZE.SMALL)
-const cardClass = computed(() =>
-  twMerge(
-    'group bg-base-200/70 flex cursor-pointer flex-col items-start rounded-2xl border border-transparent transition-[background-color,transform,box-shadow,border-color] duration-200 ease-out active:scale-[0.98]',
-    props.active
-      ? 'bg-primary text-primary-content shadow-ios-card sm:hover:bg-primary/95'
-      : props.nestedScrollSurface
-        ? 'bg-base-200/80 hover:border-base-content/10 sm:hover:bg-base-200'
-        : 'glass-surface hover:border-base-content/10 sm:hover:bg-base-200',
-    isSmallCard.value ? 'gap-1 p-2' : 'gap-2 p-3',
-    latencyTipAnimationClass.value,
-  ),
-)
+const useCompactCard = computed(() => props.nestedScrollSurface || isSmallCard.value)
+const cardClass = computed(() => [
+  BASE_CARD_CLASS,
+  props.nestedScrollSurface ? '' : DEFAULT_INTERACTION_CLASS,
+  props.active
+    ? props.nestedScrollSurface
+      ? ACTIVE_NESTED_CARD_CLASS
+      : ACTIVE_DEFAULT_CARD_CLASS
+    : props.nestedScrollSurface
+      ? NESTED_CARD_CLASS
+      : DEFAULT_CARD_CLASS,
+  props.nestedScrollSurface ? NESTED_TRANSITION_CLASS : DEFAULT_TRANSITION_CLASS,
+  useCompactCard.value ? SMALL_CARD_CLASS : LARGE_CARD_CLASS,
+  latencyTipAnimationClass.value,
+])
 const typeDescriptionClass = computed(() =>
   props.active
     ? 'truncate text-xs tracking-tight text-primary-content'
     : 'truncate text-xs tracking-tight text-base-content/60',
 )
 const latencyTagClass = computed(() =>
-  isSmallCard.value ? ['h-4! w-8! rounded-md!', 'shrink-0'] : ['shrink-0'],
+  useCompactCard.value ? ['h-4! w-8! rounded-md!', 'shrink-0'] : ['shrink-0'],
 )
 const typeDescription = computed(() => {
   const type = typeFormatter(node.value.type)
@@ -216,6 +255,36 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.node-folder-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-base-100) 82%, transparent);
+  color: color-mix(in srgb, var(--color-base-content) 52%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  transition:
+    background-color 0.18s var(--ios-ease),
+    color 0.18s var(--ios-ease),
+    transform 0.16s var(--ios-spring);
+}
+
+.node-folder-toggle:active {
+  transform: scale(0.92);
+}
+
+.node-folder-toggle.is-active {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+
 .tooltip:before {
   z-index: 20;
 }

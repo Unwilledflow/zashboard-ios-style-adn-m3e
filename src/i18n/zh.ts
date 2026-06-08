@@ -436,6 +436,11 @@ const zh: LANG_MESSAGE = {
   folder_preview: '自动匹配的代理组',
   folder_no_matches: '没有匹配的代理组',
   folder_delete_confirm: '确认删除文件夹「{name}」？',
+  folder_manual_nodes: 'Node cards',
+  folder_filter_nodes_placeholder: 'Filter node cards',
+  folder_no_nodes: 'No node cards',
+  folder_add_node: 'Add to current folder',
+  folder_remove_node: 'Remove from current folder',
 }
 
 export default zh

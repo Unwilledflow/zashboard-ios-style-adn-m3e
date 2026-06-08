@@ -118,19 +118,6 @@
         />
       </div>
       <div
-        v-if="isVisibleScrollAnimationEffect"
-        class="setting-item md:hidden!"
-      >
-        <div class="setting-item-label">
-          {{ $t('scrollAnimationEffect') }}
-        </div>
-        <input
-          type="checkbox"
-          v-model="scrollAnimationEffect"
-          class="toggle"
-        />
-      </div>
-      <div
         v-if="isVisibleSwipeInPages"
         class="setting-item md:hidden!"
       >
@@ -229,7 +216,6 @@ import {
   disablePullToRefresh,
   displayAllFeatures,
   IPInfoAPI,
-  scrollAnimationEffect,
   swipeInPages,
   swipeInTabs,
   lowPowerMode,
@@ -248,7 +234,6 @@ const isVisibleAutoDisconnectIdleUDP = useIsSettingVisible(k.autoDisconnectIdleU
 const isVisibleAutoDisconnectIdleUDPTime = useIsSettingVisible(k.autoDisconnectIdleUDPTime)
 const isVisibleIPInfoAPI = useIsSettingVisible(k.IPInfoAPI)
 const isVisibleLowPowerMode = useIsSettingVisible(k.lowPowerMode)
-const isVisibleScrollAnimationEffect = useIsSettingVisible(k.scrollAnimationEffect)
 const isVisibleSwipeInPages = useIsSettingVisible(k.swipeInPages)
 const isVisibleSwipeInTabs = useIsSettingVisible(k.swipeInTabs)
 const isVisibleDisablePullToRefresh = useIsSettingVisible(k.disablePullToRefresh)
@@ -263,7 +248,6 @@ const hasVisibleGeneralItems = computed(() => {
     (autoDisconnectIdleUDP.value && isVisibleAutoDisconnectIdleUDPTime.value) ||
     isVisibleIPInfoAPI.value ||
     isVisibleLowPowerMode.value ||
-    isVisibleScrollAnimationEffect.value ||
     isVisibleSwipeInPages.value ||
     (swipeInPages.value && isVisibleSwipeInTabs.value) ||
     isVisibleDisablePullToRefresh.value ||

@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { useCalculateMaxProxies } from '@/composables/proxiesScroll'
 import { handlerProxySelect, providerNameByProxy, proxyMap } from '@/store/proxies'
-import { computed } from 'vue'
+import {
+  activeFolderCanSelectNodes,
+  nodeIncludedInActiveFolder,
+  toggleNodeInActiveFolder,
+} from '@/store/proxyFolders'
+import { computed, type CSSProperties } from 'vue'
 import ProxyNodeCard from './ProxyNodeCard.vue'
 import ProxyNodeGrid from './ProxyNodeGrid.vue'
 
@@ -14,9 +19,15 @@ const props = defineProps<{
   name: string
   now: string
   renderProxies: string[]
+  nestedScrollSurface?: boolean
 }>()
 
 const activeIndex = computed(() => props.renderProxies.indexOf(props.now))
+const PROVIDER_SECTION_STYLE: CSSProperties = {
+  contain: 'layout style paint',
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 180px',
+}
 
 const { maxProxies } = useCalculateMaxProxies(() => props.renderProxies.length, activeIndex)
 
@@ -67,18 +78,23 @@ const groupedProxies = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2">
+  <div
+    class="flex flex-col"
+    :class="nestedScrollSurface ? 'gap-1' : 'gap-2'"
+  >
     <div
       v-for="{ providerName, proxies } in groupedProxies"
       :key="providerName || '__default_provider__'"
+      :style="PROVIDER_SECTION_STYLE"
     >
       <p
-        class="my-2 text-sm font-semibold"
+        class="font-semibold"
+        :class="nestedScrollSurface ? 'my-1 text-xs' : 'my-2 text-sm'"
         v-if="providerName !== ''"
       >
         {{ providerName }}
       </p>
-      <ProxyNodeGrid>
+      <ProxyNodeGrid :nested-scroll-surface="nestedScrollSurface">
         <ProxyNodeCard
           v-for="node in proxies"
           :key="node"
@@ -87,7 +103,10 @@ const groupedProxies = computed(() => {
           :active="node === now"
           :auto-scroll-active="false"
           :nested-scroll-surface="true"
+          :node-folder-selectable="activeFolderCanSelectNodes"
+          :node-folder-active="nodeIncludedInActiveFolder(name, node)"
           @click.stop="handlerProxySelect(name, node)"
+          @toggle-node-folder="toggleNodeInActiveFolder(name, node)"
         />
       </ProxyNodeGrid>
     </div>

@@ -3,9 +3,9 @@ import { renderRoutes } from '@/helper'
 import { connectionTabShow } from '@/store/connections'
 import { proxiesTabShow, proxyProviederList } from '@/store/proxies'
 import { ruleProviderList, rulesTabShow } from '@/store/rules'
-import { lowPowerMode, scrollAnimationEffect, swipeInPages, swipeInTabs } from '@/store/settings'
+import { swipeInPages, swipeInTabs } from '@/store/settings'
 import { useSwipe } from '@vueuse/core'
-import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 export const disableSwipe = ref(false)
@@ -14,40 +14,16 @@ type SwipeItem = [isActive: () => boolean, activate: () => void]
 type RouteSwipeDirection = 'left' | 'right'
 
 const SWIPE_START_THRESHOLD = 10
-const SWIPE_LOCK_MS = 140
 const HORIZONTAL_LOCK_RATIO = 1.35
 const MIN_COMMIT_DISTANCE = 56
 const MAX_COMMIT_DISTANCE = 96
 const COMMIT_VIEWPORT_RATIO = 0.18
-const DRAG_FOLLOW_RATIO = 0.28
-const MAX_DRAG_OFFSET = 48
 
-const clamp = (value: number, min: number, max: number) => {
-  return Math.min(Math.max(value, min), max)
-}
-
-export const useSwipeRouter = (dragTargetRef?: Ref<HTMLElement | undefined>) => {
+export const useSwipeRouter = () => {
   const swiperRef = ref<HTMLElement>()
   const route = useRoute()
   const router = useRouter()
   const swipeStartAllowed = ref(false)
-  const isTransitionLocked = ref(false)
-  let transitionLockTimer: ReturnType<typeof setTimeout> | undefined
-  let dragFrame: number | undefined
-  let pendingDragOffsetX = 0
-  let lastAppliedDragOffsetX = Number.NaN
-
-  const shouldAnimateSwipe = computed(() => {
-    return scrollAnimationEffect.value && !lowPowerMode.value
-  })
-
-  const lockTransition = () => {
-    isTransitionLocked.value = true
-    if (transitionLockTimer) clearTimeout(transitionLockTimer)
-    transitionLockTimer = setTimeout(() => {
-      isTransitionLocked.value = false
-    }, SWIPE_LOCK_MS)
-  }
 
   const swipeList = computed<SwipeItem[]>(() => {
     return renderRoutes.value.flatMap((r) => {
@@ -122,7 +98,6 @@ export const useSwipeRouter = (dragTargetRef?: Ref<HTMLElement | undefined>) => 
 
   const canHandleSwipe = () => {
     if (!swipeInPages.value) return
-    if (isTransitionLocked.value) return
 
     if (
       document.querySelector('dialog:modal') ||
@@ -133,28 +108,6 @@ export const useSwipeRouter = (dragTargetRef?: Ref<HTMLElement | undefined>) => 
       return
 
     return true
-  }
-
-  const syncDragOffset = () => {
-    dragFrame = undefined
-
-    const dragTarget = dragTargetRef?.value
-    if (!dragTarget) return
-
-    if (pendingDragOffsetX === lastAppliedDragOffsetX) return
-
-    lastAppliedDragOffsetX = pendingDragOffsetX
-    dragTarget.style.setProperty('--route-drag-x', `${pendingDragOffsetX.toFixed(2)}px`)
-  }
-
-  const scheduleDragOffsetSync = () => {
-    pendingDragOffsetX =
-      isDragging.value && shouldAnimateSwipe.value
-        ? clamp(-lengthX.value * DRAG_FOLLOW_RATIO, -MAX_DRAG_OFFSET, MAX_DRAG_OFFSET)
-        : 0
-
-    if (dragFrame !== undefined) return
-    dragFrame = requestAnimationFrame(syncDragOffset)
   }
 
   const getCommitDistance = () => {
@@ -204,7 +157,6 @@ export const useSwipeRouter = (dragTargetRef?: Ref<HTMLElement | undefined>) => 
 
       if (!shouldCommit) return
 
-      lockTransition()
       if (getSwipeDirection() === 'right') {
         activateSwipeItem(-1)
       } else {
@@ -214,25 +166,8 @@ export const useSwipeRouter = (dragTargetRef?: Ref<HTMLElement | undefined>) => 
   })
 
   const isDragging = computed(() => {
-    return (
-      shouldAnimateSwipe.value &&
-      swipeStartAllowed.value &&
-      isSwiping.value &&
-      isHorizontalIntent.value
-    )
+    return swipeStartAllowed.value && isSwiping.value && isHorizontalIntent.value
   })
-
-  onBeforeUnmount(() => {
-    if (transitionLockTimer) {
-      clearTimeout(transitionLockTimer)
-    }
-    if (dragFrame !== undefined) {
-      cancelAnimationFrame(dragFrame)
-    }
-    dragTargetRef?.value?.style.removeProperty('--route-drag-x')
-  })
-
-  watch([isDragging, lengthX, shouldAnimateSwipe], scheduleDragOffsetSync, { immediate: true })
 
   return {
     isDragging,

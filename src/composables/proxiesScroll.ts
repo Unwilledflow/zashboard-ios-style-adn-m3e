@@ -12,12 +12,17 @@ export const useCalculateMaxProxies = (
   enabled: MaybeRefOrGetter<boolean> = true,
 ) => {
   const el = useCurrentElement()
-  const measuredElement = computed(() => (el.value instanceof HTMLElement ? el.value : null))
-  const { width } = useElementSize(measuredElement)
   const totalProxyCount = computed(() => Math.max(0, toValue(totalProxies)))
   const enabledState = computed(() => toValue(enabled))
+  const lazyRenderEnabled = computed(
+    () => enabledState.value && totalProxyCount.value > SCROLL_STABLE_PROXY_LIMIT,
+  )
+  const measuredElement = computed(() =>
+    lazyRenderEnabled.value && el.value instanceof HTMLElement ? el.value : null,
+  )
+  const { width } = useElementSize(measuredElement)
   const activeProxyIndex = computed(() => {
-    if (!enabledState.value) return -1
+    if (!lazyRenderEnabled.value) return -1
 
     return Math.max(-1, toValue(activeIndex))
   })
@@ -32,6 +37,7 @@ export const useCalculateMaxProxies = (
     )
   })
   const maxProxies = ref(Math.min(Math.max(24, activeProxyIndex.value + 12), totalProxyCount.value))
+  let infiniteScrollAttached = false
 
   const setMaxProxies = (nextMaxProxies: number) => {
     if (nextMaxProxies === maxProxies.value) return
@@ -40,6 +46,10 @@ export const useCalculateMaxProxies = (
 
   const syncMaxProxies = () => {
     if (!enabledState.value) return
+    if (!lazyRenderEnabled.value) {
+      setMaxProxies(totalProxyCount.value)
+      return
+    }
 
     setMaxProxies(
       Math.min(
@@ -49,38 +59,48 @@ export const useCalculateMaxProxies = (
     )
   }
 
+  const attachInfiniteScroll = () => {
+    if (infiniteScrollAttached) return
+    if (!lazyRenderEnabled.value) return
+
+    const element = measuredElement.value
+
+    if (!element) return
+
+    const scrollEl = findScrollableParent(element)
+
+    if (!scrollEl) return
+
+    infiniteScrollAttached = true
+    useInfiniteScroll(
+      scrollEl,
+      () => {
+        if (!lazyRenderEnabled.value) return
+
+        setMaxProxies(
+          Math.min(maxProxies.value + Math.max(initMaxProxies.value, 24), totalProxyCount.value),
+        )
+      },
+      {
+        distance: 100,
+        interval: 120,
+        canLoadMore: () => {
+          return lazyRenderEnabled.value && maxProxies.value < totalProxyCount.value
+        },
+      },
+    )
+  }
+
   watch([initMaxProxies, totalProxyCount, activeProxyIndex, enabledState], syncMaxProxies, {
     immediate: true,
   })
 
+  watch(lazyRenderEnabled, () => nextTick(attachInfiniteScroll), {
+    flush: 'post',
+  })
+
   onMounted(() => {
-    nextTick(() => {
-      const element = measuredElement.value
-
-      if (!element) return
-
-      const scrollEl = findScrollableParent(element)
-
-      if (!scrollEl) return
-
-      useInfiniteScroll(
-        scrollEl,
-        () => {
-          if (!enabledState.value) return
-
-          setMaxProxies(
-            Math.min(maxProxies.value + Math.max(initMaxProxies.value, 24), totalProxyCount.value),
-          )
-        },
-        {
-          distance: 100,
-          interval: 120,
-          canLoadMore: () => {
-            return enabledState.value && maxProxies.value < totalProxyCount.value
-          },
-        },
-      )
-    })
+    nextTick(attachInfiniteScroll)
   })
 
   return {

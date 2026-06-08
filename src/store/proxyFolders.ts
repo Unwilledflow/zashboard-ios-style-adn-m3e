@@ -23,6 +23,7 @@ export interface Folder {
   order: number
   rules: FolderRule[]
   manualIncludes: string[]
+  manualNodeIncludes?: Record<string, string[]>
 }
 
 interface FolderState {
@@ -55,6 +56,7 @@ const seedDefaultFolders = () => {
       order: 0,
       rules: [{ type: 'auto', value: 'hasGroup' }],
       manualIncludes: [],
+      manualNodeIncludes: {},
     },
     {
       id: BUILTIN_NODES_ID,
@@ -62,6 +64,7 @@ const seedDefaultFolders = () => {
       order: 1,
       rules: [{ type: 'auto', value: 'nodeOnly' }],
       manualIncludes: [],
+      manualNodeIncludes: {},
     },
   ]
   folderState.value.seeded = true
@@ -112,6 +115,68 @@ const folderRuleMatch = (groupName: string, rules: FolderRule[]): boolean => {
   return !excludes.some((r) => matchRule(groupName, r))
 }
 
+const manualNodeIncludesFor = (folder: Folder) => folder.manualNodeIncludes ?? {}
+
+const folderHasManualNodesForGroup = (folder: Folder, groupName: string) => {
+  return (manualNodeIncludesFor(folder)[groupName]?.length ?? 0) > 0
+}
+
+const folderFullyIncludesGroup = (folder: Folder, groupName: string) => {
+  return folder.manualIncludes.includes(groupName) || folderRuleMatch(groupName, folder.rules)
+}
+
+const arraysEqual = (a: string[], b: string[]) => {
+  return a.length === b.length && a.every((item, index) => item === b[index])
+}
+
+const pruneManualEntriesForCurrentProxyMap = () => {
+  if (!proxyGroupList.value.length) return
+
+  const groupSet = new Set(proxyGroupList.value)
+  let changed = false
+  const nextFolders = folderState.value.folders.map((folder) => {
+    const manualIncludes = folder.manualIncludes.filter((groupName) => groupSet.has(groupName))
+    const manualNodeIncludes: Record<string, string[]> = {}
+    let nodeIncludesChanged = false
+
+    for (const [groupName, nodes] of Object.entries(manualNodeIncludesFor(folder))) {
+      if (!groupSet.has(groupName)) {
+        nodeIncludesChanged = true
+        continue
+      }
+
+      const groupNodes = new Set(proxyMap.value[groupName]?.all ?? [])
+      const seen = new Set<string>()
+      const validNodes = nodes.filter((nodeName) => {
+        if (seen.has(nodeName) || !groupNodes.has(nodeName)) return false
+        seen.add(nodeName)
+        return true
+      })
+
+      if (!arraysEqual(validNodes, nodes)) {
+        nodeIncludesChanged = true
+      }
+      if (validNodes.length) {
+        manualNodeIncludes[groupName] = validNodes
+      }
+    }
+
+    const manualIncludesChanged = !arraysEqual(manualIncludes, folder.manualIncludes)
+    if (!manualIncludesChanged && !nodeIncludesChanged) return folder
+
+    changed = true
+    return {
+      ...folder,
+      manualIncludes,
+      manualNodeIncludes,
+    }
+  })
+
+  if (changed) {
+    folderState.value.folders = nextFolders
+  }
+}
+
 const sortedFolders = computed(() =>
   [...folderState.value.folders].sort((a, b) => a.order - b.order),
 )
@@ -125,9 +190,9 @@ export const groupMatchesFolderRule = (groupName: string, folderId: string): boo
 export const foldersOfGroup = (groupName: string): string[] => {
   const result: string[] = []
   for (const f of sortedFolders.value) {
-    const manual = f.manualIncludes.includes(groupName)
-    const ruled = folderRuleMatch(groupName, f.rules)
-    if (manual || ruled) result.push(f.id)
+    if (folderFullyIncludesGroup(f, groupName) || folderHasManualNodesForGroup(f, groupName)) {
+      result.push(f.id)
+    }
   }
   return result
 }
@@ -171,10 +236,15 @@ export const isProxyFolderModeActive = computed(() => {
   }
 })
 
+export const isCustomFolder = (folderId: string) => {
+  return ![VIRTUAL_ALL, VIRTUAL_UNCAT, BUILTIN_STRATEGY_ID, BUILTIN_NODES_ID].includes(folderId)
+}
+
 watch(
   proxyGroupList,
   (list) => {
     if (!list.length) return
+    pruneManualEntriesForCurrentProxyMap()
     const id = folderState.value.activeId
     if (id === VIRTUAL_ALL || id === VIRTUAL_UNCAT) return
     if (!folderState.value.folders.some((f) => f.id === id)) {
@@ -191,12 +261,14 @@ export const createFolder = (name: string): Folder => {
     order: folderState.value.folders.length,
     rules: [],
     manualIncludes: [],
+    manualNodeIncludes: {},
   }
   folderState.value.folders.push(folder)
   return folder
 }
 
 export const removeFolder = (id: string) => {
+  if (!isCustomFolder(id)) return
   folderState.value.folders = folderState.value.folders.filter((f) => f.id !== id)
   if (folderState.value.activeId === id) folderState.value.activeId = VIRTUAL_ALL
 }
@@ -235,6 +307,76 @@ export const removeManualInclude = (groupName: string, folderId: string) => {
   const f = folderState.value.folders.find((x) => x.id === folderId)
   if (!f) return
   f.manualIncludes = f.manualIncludes.filter((n) => n !== groupName)
+}
+
+export const activeFolderCanSelectNodes = computed(() => {
+  return isCustomFolder(folderState.value.activeId)
+})
+
+const activeFolderNodeFiltersByGroup = computed(() => {
+  const f = folderState.value.folders.find((x) => x.id === folderState.value.activeId)
+  const filters = new Map<string, Set<string>>()
+  if (!f) return filters
+
+  for (const [groupName, nodes] of Object.entries(manualNodeIncludesFor(f))) {
+    if (!nodes.length || folderFullyIncludesGroup(f, groupName)) continue
+    filters.set(groupName, new Set(nodes))
+  }
+
+  return filters
+})
+
+export const nodeIncludedInFolder = (groupName: string, nodeName: string, folderId: string) => {
+  const f = folderState.value.folders.find((x) => x.id === folderId)
+  if (!f) return false
+  return manualNodeIncludesFor(f)[groupName]?.includes(nodeName) ?? false
+}
+
+export const nodeIncludedInActiveFolder = (groupName: string, nodeName: string) => {
+  return nodeIncludedInFolder(groupName, nodeName, folderState.value.activeId)
+}
+
+export const addNodeToFolder = (groupName: string, nodeName: string, folderId: string) => {
+  const f = folderState.value.folders.find((x) => x.id === folderId)
+  if (!f) return
+
+  const manualNodeIncludes = { ...manualNodeIncludesFor(f) }
+  const nodes = manualNodeIncludes[groupName] ?? []
+  if (nodes.includes(nodeName)) return
+
+  manualNodeIncludes[groupName] = [...nodes, nodeName]
+  updateFolder(folderId, { manualNodeIncludes })
+}
+
+export const removeNodeFromFolder = (groupName: string, nodeName: string, folderId: string) => {
+  const f = folderState.value.folders.find((x) => x.id === folderId)
+  if (!f) return
+
+  const manualNodeIncludes = { ...manualNodeIncludesFor(f) }
+  const nodes = (manualNodeIncludes[groupName] ?? []).filter((n) => n !== nodeName)
+
+  if (nodes.length) {
+    manualNodeIncludes[groupName] = nodes
+  } else {
+    delete manualNodeIncludes[groupName]
+  }
+
+  updateFolder(folderId, { manualNodeIncludes })
+}
+
+export const toggleNodeInActiveFolder = (groupName: string, nodeName: string) => {
+  const folderId = folderState.value.activeId
+  if (!isCustomFolder(folderId)) return
+
+  if (nodeIncludedInFolder(groupName, nodeName, folderId)) {
+    removeNodeFromFolder(groupName, nodeName, folderId)
+  } else {
+    addNodeToFolder(groupName, nodeName, folderId)
+  }
+}
+
+export const activeFolderNodeFilterForGroup = (groupName: string): Set<string> | null => {
+  return activeFolderNodeFiltersByGroup.value.get(groupName) ?? null
 }
 
 export const folderManagerOpen = useStorage('cache/folder-manager-open', false, sessionStorage)

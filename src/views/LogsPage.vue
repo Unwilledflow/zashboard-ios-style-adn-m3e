@@ -11,9 +11,8 @@
       <VirtualScroller
         v-else
         :data="renderLogs"
-        :size="44"
+        :size="64"
         :overscan="8"
-        dynamic-size
       >
         <template v-slot="{ item }: { item: LogWithSeq }">
           <LogsCard :log="item" />

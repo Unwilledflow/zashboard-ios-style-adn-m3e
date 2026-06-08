@@ -19,6 +19,7 @@
     "prepare": "husky",
     "preview": "vite preview",
     "type-check": "vue-tsc --build --force",
+    "verify:dist-package": "node scripts/verify-dist-package.mjs",
     "verify:mobile-dock": "node scripts/verify-mobile-dock.mjs",
     "verify:mobile-dock:browser": "node scripts/verify-mobile-dock.mjs --browser",
     "verify:mobile-dock:fixture-browser": "node scripts/verify-mobile-dock.mjs --fixture-browser",

@@ -4,6 +4,7 @@ import { isHiddenGroup } from '@/helper'
 import { configs } from '@/store/config'
 import {
   getProxyGroupChains,
+  hiddenGroupMap,
   proxiesTabShow,
   proxyGroupList,
   proxyMap,
@@ -98,6 +99,24 @@ export const unlockProxiesPageScroll = (token: symbol | undefined) => {
 
   proxiesPageScrollLockTokens.delete(token)
   syncProxiesPageScrollLock()
+}
+
+export const useProxyHiddenGroup = (getGroupName: () => string) => {
+  const hiddenGroup = computed({
+    get: () => isHiddenGroup(getGroupName()),
+    set: (value: boolean) => {
+      hiddenGroupMap.value[getGroupName()] = value
+    },
+  })
+
+  const handlerGroupToggle = () => {
+    hiddenGroup.value = !hiddenGroup.value
+  }
+
+  return {
+    handlerGroupToggle,
+    hiddenGroup,
+  }
 }
 
 export const isProxiesPageMounted = ref(false)

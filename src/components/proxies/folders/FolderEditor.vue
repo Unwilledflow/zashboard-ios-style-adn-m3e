@@ -23,6 +23,7 @@
         :placeholder="$t('folder_name')"
       />
       <button
+        v-if="canDeleteFolder"
         type="button"
         class="btn btn-circle btn-ghost btn-xs text-error"
         :aria-label="$t('delete')"
@@ -168,22 +169,76 @@
         </div>
       </div>
     </section>
+
+    <section>
+      <div
+        class="text-base-content/70 mb-1.5 flex items-center gap-2 text-xs font-medium uppercase"
+      >
+        <span>{{ $t('folder_manual_nodes') }} ({{ manualNodeCount }})</span>
+      </div>
+      <div class="border-base-300 rounded-md border p-2">
+        <select
+          v-model="selectedGroup"
+          class="select select-xs select-bordered mb-1.5 w-full"
+        >
+          <option
+            v-for="name in proxyGroupList"
+            :key="name"
+            :value="name"
+          >
+            {{ name }}
+          </option>
+        </select>
+        <input
+          v-model="nodeFilterText"
+          class="input input-xs input-bordered mb-1.5 w-full"
+          :placeholder="$t('folder_filter_nodes_placeholder')"
+        />
+        <div class="max-h-64 overflow-y-auto">
+          <label
+            v-for="node in filteredNodes"
+            :key="node"
+            class="hover:bg-base-200 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5"
+          >
+            <input
+              type="checkbox"
+              class="checkbox checkbox-xs"
+              :checked="isNodeChecked(selectedGroup, node)"
+              @change="
+                onNodeToggle(selectedGroup, node, ($event.target as HTMLInputElement).checked)
+              "
+            />
+            <span class="flex-1 truncate text-xs">{{ node }}</span>
+          </label>
+          <div
+            v-if="!filteredNodes.length"
+            class="text-base-content/40 px-2 py-3 text-center text-xs"
+          >
+            {{ $t('folder_no_nodes') }}
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { proxyGroupList } from '@/store/proxies'
+import { proxyGroupList, proxyMap } from '@/store/proxies'
 import {
+  addNodeToFolder,
   addGroupToFolder,
   folders,
   groupMatchesFolderRule,
+  isCustomFolder,
+  nodeIncludedInFolder,
   removeFolder,
   removeManualInclude,
+  removeNodeFromFolder,
   updateFolder,
   type FolderRule,
 } from '@/store/proxyFolders'
 import { ArrowLeftIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/vue/24/outline'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { displayFolderName } from './folderName'
 
@@ -193,7 +248,10 @@ const { t } = useI18n()
 
 const folder = computed(() => folders.value.find((f) => f.id === props.id))
 const displayName = computed(() => (folder.value ? displayFolderName(folder.value.name) : ''))
+const canDeleteFolder = computed(() => (folder.value ? isCustomFolder(folder.value.id) : false))
 const filterText = ref('')
+const nodeFilterText = ref('')
+const selectedGroup = ref('')
 
 const onNameInput = (v: string) => {
   if (!folder.value) return
@@ -201,7 +259,7 @@ const onNameInput = (v: string) => {
 }
 
 const onDelete = () => {
-  if (!folder.value) return
+  if (!folder.value || !canDeleteFolder.value) return
   if (!confirm(t('folder_delete_confirm', { name: displayName.value }))) return
   removeFolder(folder.value.id)
   emit('close')
@@ -245,6 +303,20 @@ const onToggle = (groupName: string, checked: boolean) => {
   }
 }
 
+const isNodeChecked = (groupName: string, nodeName: string) => {
+  if (!folder.value) return false
+  return nodeIncludedInFolder(groupName, nodeName, folder.value.id)
+}
+
+const onNodeToggle = (groupName: string, nodeName: string, checked: boolean) => {
+  if (!folder.value || !groupName) return
+  if (checked) {
+    addNodeToFolder(groupName, nodeName, folder.value.id)
+  } else {
+    removeNodeFromFolder(groupName, nodeName, folder.value.id)
+  }
+}
+
 const filteredGroups = computed(() => {
   const kw = filterText.value.trim().toLowerCase()
   if (!kw) return proxyGroupList.value
@@ -255,4 +327,28 @@ const matched = computed(() => {
   if (!folder.value) return []
   return proxyGroupList.value.filter((n) => groupMatchesFolderRule(n, folder.value!.id))
 })
+
+const manualNodeCount = computed(() => {
+  if (!folder.value?.manualNodeIncludes) return 0
+  return Object.values(folder.value.manualNodeIncludes).reduce(
+    (sum, nodes) => sum + nodes.length,
+    0,
+  )
+})
+
+const filteredNodes = computed(() => {
+  const nodes = proxyMap.value[selectedGroup.value]?.all ?? []
+  const kw = nodeFilterText.value.trim().toLowerCase()
+  if (!kw) return nodes
+  return nodes.filter((n) => n.toLowerCase().includes(kw))
+})
+
+watch(
+  proxyGroupList,
+  (list) => {
+    if (selectedGroup.value && list.includes(selectedGroup.value)) return
+    selectedGroup.value = list[0] ?? ''
+  },
+  { immediate: true },
+)
 </script>

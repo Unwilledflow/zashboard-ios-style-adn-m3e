@@ -1,26 +1,29 @@
-import { createServer } from 'node:http'
-import { createReadStream, existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
-import { tmpdir } from 'node:os'
-import { readFile } from 'node:fs/promises'
 import { execFileSync, spawn } from 'node:child_process'
+import { createReadStream, existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 
 const root = resolve(process.cwd(), 'dist')
 const sourceRoot = resolve(process.cwd(), 'src')
 const constantRoot = resolve(process.cwd(), 'src', 'constant')
 const servedRequests = []
 const args = new Set(process.argv.slice(2))
-const shouldRunBrowserCheck = process.env.ZASHBOARD_DOCK_VERIFY_BROWSER === '1' || args.has('--browser')
+const shouldRunBrowserCheck =
+  process.env.ZASHBOARD_DOCK_VERIFY_BROWSER === '1' || args.has('--browser')
 const shouldRunUnstableBrowserCli =
   process.env.ZASHBOARD_DOCK_VERIFY_UNSTABLE_CLI === '1' || args.has('--unstable-cli')
-const shouldServeOnly = process.env.ZASHBOARD_DOCK_VERIFY_SERVER_ONLY === '1' || args.has('--server-only')
-const shouldRunFixtureBrowser = process.env.ZASHBOARD_DOCK_VERIFY_FIXTURE_BROWSER === '1' || args.has('--fixture-browser')
+const shouldServeOnly =
+  process.env.ZASHBOARD_DOCK_VERIFY_SERVER_ONLY === '1' || args.has('--server-only')
+const shouldRunFixtureBrowser =
+  process.env.ZASHBOARD_DOCK_VERIFY_FIXTURE_BROWSER === '1' || args.has('--fixture-browser')
 const defaultPort = shouldRunBrowserCheck || shouldRunUnstableBrowserCli ? 4192 : 4193
 const port = Number(process.env.ZASHBOARD_DOCK_VERIFY_PORT || defaultPort)
 const baseUrl = `http://localhost:${port}`
 const screenshotRoot = resolve(
-  process.env.ZASHBOARD_DOCK_VERIFY_SCREENSHOT_DIR || join(process.cwd(), 'output', 'verify-mobile-dock'),
+  process.env.ZASHBOARD_DOCK_VERIFY_SCREENSHOT_DIR ||
+    join(process.cwd(), 'output', 'verify-mobile-dock'),
 )
 const npxCliPath = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npx-cli.js')
 const npxCommand = process.platform === 'win32' && existsSync(npxCliPath) ? process.execPath : 'npx'
@@ -44,6 +47,9 @@ const expectedDarkDockThemes = [
   'abyss',
   'sunset',
 ]
+const EXPECTED_DOCK_WIDTH = 320
+const EXPECTED_DOCK_HEIGHT = 52
+const DOCK_SIZE_EPSILON = 0.5
 
 const getVerifiedSourceChecks = (themeClassification) => ({
   navSemantics: true,
@@ -51,6 +57,9 @@ const getVerifiedSourceChecks = (themeClassification) => ({
   focusVisibleRule: true,
   lightThemeBackgroundRule: true,
   darkThemeBackgroundRule: true,
+  customWhiteThemeColorScheme: true,
+  singleLayerDockPill: true,
+  appLayerFixedDock: true,
   lightThemesExcludedFromDarkDockRule: true,
   allThemesClassifiedForDock: true,
   darkDockThemes: themeClassification.darkDockThemes,
@@ -62,6 +71,8 @@ const getVerifiedBuildChecks = (builtCssFile, themeClassification) => ({
   focusVisibleRule: true,
   lightThemeBackgroundRule: true,
   darkThemeBackgroundRule: true,
+  singleLayerDockPill: true,
+  appLayerFixedDock: true,
   lightThemesExcludedFromDarkDockRule: true,
   allThemesClassifiedForDock: true,
   darkDockThemes: themeClassification.darkDockThemes,
@@ -175,7 +186,10 @@ const getDockFixtureHtml = async () => {
       <div class="dock dock-xs h-[52px]">
         ${['Overview', 'Proxies', 'Rules', 'Connections', 'Settings']
           .map(
-            (name, index) => `<button class="dock-button h-[52px] flex-col items-center justify-center pt-1.5 ${index === 1 ? 'dock-active' : ''}" type="button" aria-label="${name}" ${
+            (
+              name,
+              index,
+            ) => `<button class="dock-button h-[52px] flex-col items-center justify-center pt-1.5 ${index === 1 ? 'dock-active' : ''}" type="button" aria-label="${name}" ${
               index === 1 ? 'aria-current="page"' : ''
             }>
               <svg class="dock-icon h-5 w-5 flex-shrink-0" aria-hidden="true" focusable="false" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"></circle></svg>
@@ -194,10 +208,12 @@ const getLatestBuiltCssFile = async () => {
   if (!existsSync(root)) fail('Build output is missing; run npm run build before dock verification')
 
   const assetsRoot = join(root, 'assets')
-  if (!existsSync(assetsRoot)) fail('Built assets directory is missing; run npm run build before dock verification')
+  if (!existsSync(assetsRoot))
+    fail('Built assets directory is missing; run npm run build before dock verification')
 
   const indexCssFiles = (await readdir(assetsRoot)).filter((file) => /^index-.*\.css$/.test(file))
-  if (!indexCssFiles.length) fail('Built index CSS file is missing; run npm run build before dock verification')
+  if (!indexCssFiles.length)
+    fail('Built index CSS file is missing; run npm run build before dock verification')
 
   const filesWithStats = await Promise.all(
     indexCssFiles.map(async (file) => ({
@@ -253,12 +269,15 @@ const runPlaywrightCliBrowserCheck = async (
         const focused = document.activeElement;
         const focusStyle = focused ? getComputedStyle(focused) : null;
         const dockStyle = dock ? getComputedStyle(dock) : null;
+        const navStyle = nav ? getComputedStyle(nav) : null;
 
         return {
           activeAriaCurrent: active?.getAttribute('aria-current') || '',
           activeName: active?.getAttribute('aria-label') || '',
           buttonCount: buttons.length,
           dockBackground: dockStyle?.backgroundColor || '',
+          dockBoxShadow: dockStyle?.boxShadow || '',
+          dockShellPosition: navStyle?.position || '',
           dockHeight: dock?.getBoundingClientRect().height || 0,
           dockWidth: dock?.getBoundingClientRect().width || 0,
           focusedAriaLabel: focused?.getAttribute('aria-label') || '',
@@ -308,19 +327,39 @@ const runPlaywrightCliBrowserCheck = async (
     if (parsed.navAriaLabel !== 'Main navigation') fail('Dock nav label mismatch', parsed)
     if (parsed.buttonCount < 5) fail('Dock rendered too few route buttons', parsed)
     if (!parsed.names.every(Boolean)) fail('Dock button accessible names missing', parsed)
-    if (parsed.activeAriaCurrent !== 'page') fail('Active dock route lacks aria-current=page', parsed)
-    if (parsed.activeName !== 'Proxies') fail('Active dock route should be Proxies on #/proxies', parsed)
+    if (parsed.activeAriaCurrent !== 'page')
+      fail('Active dock route lacks aria-current=page', parsed)
+    if (parsed.activeName !== 'Proxies')
+      fail('Active dock route should be Proxies on #/proxies', parsed)
     if (!parsed.iconHidden) fail('Dock icons are not consistently decorative', parsed)
-    if (parsed.focusedAriaLabel !== 'Overview') fail('First dock button did not receive focus', parsed)
+    if (parsed.focusedAriaLabel !== 'Overview')
+      fail('First dock button did not receive focus', parsed)
     if (parsed.focusOutlineStyle === 'none' || parsed.focusOutlineWidth === '0px') {
       fail('Focused dock button has no visible outline', parsed)
     }
-    if (parsed.dockHeight < 50 || parsed.dockHeight > 58) fail('Dock height changed unexpectedly', parsed)
-    if (parsed.dockWidth < 300 || parsed.dockWidth > 330) fail('Dock width changed unexpectedly', parsed)
+    assertDockBounds(
+      { height: parsed.dockHeight, width: parsed.dockWidth },
+      'Dock dimensions changed unexpectedly',
+      parsed,
+    )
+    assertDockFixedLayer(
+      parsed.dockShellPosition,
+      'Dock shell is no longer fixed to the viewport',
+      parsed,
+    )
+    assertDockHasFloatingShadow(
+      parsed.dockBoxShadow,
+      'Dock no longer renders as a lifted floating pill',
+      parsed,
+    )
 
     const lightColor = parseRgb(parsed.dockBackground)
     if (!lightColor) fail('Could not parse light dock background', parsed)
-    assertLightDockColor(lightColor, 'Light dock background no longer matches the expected frosted light plate', parsed)
+    assertLightDockColor(
+      lightColor,
+      'Light dock background no longer matches the expected frosted light plate',
+      parsed,
+    )
 
     const darkRaw = runNpxCli(
       [
@@ -345,10 +384,14 @@ const runPlaywrightCliBrowserCheck = async (
     const darkBackground = parsePlaywrightCliResult(darkRaw)
     const darkColor = parseRgb(darkBackground)
     if (!darkColor) fail('Could not parse dark dock background', { ...parsed, darkBackground })
-    assertDarkDockColor(darkColor, 'Dark dock background does not match expected frosted dark plate', {
-      ...parsed,
-      darkBackground,
-    })
+    assertDarkDockColor(
+      darkColor,
+      'Dark dock background does not match expected frosted dark plate',
+      {
+        ...parsed,
+        darkBackground,
+      },
+    )
 
     return {
       pass: true,
@@ -373,7 +416,15 @@ const runPlaywrightCliBrowserCheck = async (
   } finally {
     try {
       runNpxCli(
-        ['--yes', '--package', '@playwright/cli', 'playwright-cli', '--session', sessionName, 'close'],
+        [
+          '--yes',
+          '--package',
+          '@playwright/cli',
+          'playwright-cli',
+          '--session',
+          sessionName,
+          'close',
+        ],
         { stdio: 'ignore', timeout: 15000 },
       )
     } catch {
@@ -546,7 +597,11 @@ const createCdpClient = (webSocketUrl) =>
     socket.addEventListener('close', cleanup)
   })
 
-const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, buildThemeClassification) => {
+const runEdgeCdpFixtureCheck = async (
+  builtCssFile,
+  sourceThemeClassification,
+  buildThemeClassification,
+) => {
   const edgePath = getEdgeExecutable()
   if (!edgePath) fail('Microsoft Edge executable could not be located')
 
@@ -566,11 +621,7 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
   ]
   const stderrChunks = []
   let edgeExit
-  const edge = spawn(
-    edgePath,
-    edgeArgs,
-    { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
-  )
+  const edge = spawn(edgePath, edgeArgs, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
   edge.stderr?.on('data', (chunk) => {
     stderrChunks.push(chunk.toString('utf8'))
   })
@@ -692,12 +743,52 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
         });
       const readDock = () => {
         const style = getComputedStyle(dock);
+        const navStyle = getComputedStyle(nav);
+        const navBefore = getComputedStyle(nav, '::before');
+        const navAfter = getComputedStyle(nav, '::after');
+        const dockBefore = getComputedStyle(dock, '::before');
+        const dockAfter = getComputedStyle(dock, '::after');
         const box = dock.getBoundingClientRect();
         const navBox = nav.getBoundingClientRect();
         const frameBox = document.querySelector('.dock-fixture-frame').getBoundingClientRect();
         return {
           backgroundColor: style.backgroundColor,
           backdropFilter: style.backdropFilter || style.webkitBackdropFilter || '',
+          boxShadow: style.boxShadow || '',
+          shellBackgroundColor: navStyle.backgroundColor || '',
+          shellBoxShadow: navStyle.boxShadow || '',
+          shellFilter: navStyle.filter || '',
+          shellPosition: navStyle.position || '',
+          pseudo: {
+            shellBefore: {
+              content: navBefore.content || '',
+              display: navBefore.display || '',
+              backgroundColor: navBefore.backgroundColor || '',
+              boxShadow: navBefore.boxShadow || '',
+              filter: navBefore.filter || '',
+            },
+            shellAfter: {
+              content: navAfter.content || '',
+              display: navAfter.display || '',
+              backgroundColor: navAfter.backgroundColor || '',
+              boxShadow: navAfter.boxShadow || '',
+              filter: navAfter.filter || '',
+            },
+            dockBefore: {
+              content: dockBefore.content || '',
+              display: dockBefore.display || '',
+              backgroundColor: dockBefore.backgroundColor || '',
+              boxShadow: dockBefore.boxShadow || '',
+              filter: dockBefore.filter || '',
+            },
+            dockAfter: {
+              content: dockAfter.content || '',
+              display: dockAfter.display || '',
+              backgroundColor: dockAfter.backgroundColor || '',
+              boxShadow: dockAfter.boxShadow || '',
+              filter: dockAfter.filter || '',
+            },
+          },
           height: box.height,
           width: box.width,
           top: box.top,
@@ -722,6 +813,15 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
       document.documentElement.setAttribute('data-theme', 'dark');
       await new Promise((resolve) => requestAnimationFrame(resolve));
       const dark = readDock();
+      const themeMatrix = [];
+      for (const themeName of ${JSON.stringify(sourceThemeClassification.allThemes)}) {
+        document.documentElement.setAttribute('data-theme', themeName);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        themeMatrix.push({
+          themeName,
+          ...readDock(),
+        });
+      }
       document.documentElement.setAttribute('data-theme', 'light');
       buttons[0]?.focus();
       const focusStyle = getComputedStyle(document.activeElement);
@@ -740,11 +840,12 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
         focusOutlineWidth: focusStyle.outlineWidth,
           light,
           dark,
-          labelRects: readLabelRects(),
-          buttonHitTargets: buttons.map((button) => ({
-            expectedName: button.getAttribute('aria-label') || '',
-            ...hitTestElement(button),
-          })),
+        themeMatrix,
+        labelRects: readLabelRects(),
+        buttonHitTargets: buttons.map((button) => ({
+          expectedName: button.getAttribute('aria-label') || '',
+          ...hitTestElement(button),
+        })),
         };
       }`
     const evaluation = await send('Runtime.evaluate', {
@@ -753,49 +854,111 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
       returnByValue: true,
     })
 
-    if (evaluation.exceptionDetails) fail('Edge CDP fixture evaluation failed', evaluation.exceptionDetails)
+    if (evaluation.exceptionDetails)
+      fail('Edge CDP fixture evaluation failed', evaluation.exceptionDetails)
 
     const parsed = evaluation.result.value
     if (parsed.navAriaLabel !== 'Main navigation') fail('Fixture dock nav label mismatch', parsed)
-    if (parsed.buttonCount !== 5) fail('Fixture dock rendered unexpected route button count', parsed)
-    if (!parsed.buttonNames.every(Boolean)) fail('Fixture dock button accessible names missing', parsed)
+    if (parsed.buttonCount !== 5)
+      fail('Fixture dock rendered unexpected route button count', parsed)
+    if (!parsed.buttonNames.every(Boolean))
+      fail('Fixture dock button accessible names missing', parsed)
     if (parsed.activeAriaCurrent !== 'page' || parsed.activeName !== 'Proxies') {
       fail('Fixture active route semantics mismatch', parsed)
     }
     if (!parsed.iconHidden) fail('Fixture dock icons are not decorative', parsed)
-    if (parsed.focusedName !== 'Overview') fail('Fixture first dock button did not receive focus', parsed)
+    if (parsed.focusedName !== 'Overview')
+      fail('Fixture first dock button did not receive focus', parsed)
     if (parsed.focusOutlineStyle === 'none' || parsed.focusOutlineWidth === '0px') {
       fail('Fixture focused dock button has no visible outline', parsed)
     }
     const undersizedButtons = parsed.buttonHitTargets.filter(
       (button) => button.width < 44 || button.height < 44,
     )
-    if (undersizedButtons.length) fail('Fixture dock buttons are below the 44px touch target floor', parsed)
+    if (undersizedButtons.length)
+      fail('Fixture dock buttons are below the 44px touch target floor', parsed)
     const missedButtonHits = parsed.buttonHitTargets.filter(
       (button) => button.hitDockButtonName !== button.expectedName || !button.hitDockShell,
     )
     if (missedButtonHits.length) fail('Fixture dock button centers are not top hit targets', parsed)
-    assertDockLabels(parsed.labelRects, 'Fixture dock labels overlap or overflow their buttons', parsed)
+    assertDockLabels(
+      parsed.labelRects,
+      'Fixture dock labels overlap or overflow their buttons',
+      parsed,
+    )
 
     const lightColor = parseRgb(parsed.light.backgroundColor)
     const darkColor = parseRgb(parsed.dark.backgroundColor)
-    if (!lightColor || !darkColor) fail('Fixture dock background colors could not be parsed', parsed)
+    if (!lightColor || !darkColor)
+      fail('Fixture dock background colors could not be parsed', parsed)
     assertDockBounds(parsed.light, 'Fixture light dock dimensions changed unexpectedly', parsed)
     assertDockBounds(parsed.dark, 'Fixture dark dock dimensions changed unexpectedly', parsed)
-    assertDockSafeArea(parsed.light, 'Fixture light dock safe-area geometry changed unexpectedly', parsed)
-    assertDockSafeArea(parsed.dark, 'Fixture dark dock safe-area geometry changed unexpectedly', parsed)
+    assertDockFixedLayer(
+      parsed.light.shellPosition,
+      'Fixture light dock shell is no longer fixed to the viewport',
+      parsed,
+    )
+    assertDockFixedLayer(
+      parsed.dark.shellPosition,
+      'Fixture dark dock shell is no longer fixed to the viewport',
+      parsed,
+    )
+    assertDockSafeArea(
+      parsed.light,
+      'Fixture light dock safe-area geometry changed unexpectedly',
+      parsed,
+    )
+    assertDockSafeArea(
+      parsed.dark,
+      'Fixture dark dock safe-area geometry changed unexpectedly',
+      parsed,
+    )
+    assertDockHasFloatingShadow(
+      parsed.light.boxShadow,
+      'Fixture light dock no longer renders as a lifted floating pill',
+      parsed,
+    )
+    assertDockHasFloatingShadow(
+      parsed.dark.boxShadow,
+      'Fixture dark dock no longer renders as a lifted floating pill',
+      parsed,
+    )
+    assertDockShellHasNoVisualLayer(
+      parsed.light,
+      'Fixture light dock shell rendered an extra visual layer',
+      parsed,
+    )
+    assertDockShellHasNoVisualLayer(
+      parsed.dark,
+      'Fixture dark dock shell rendered an extra visual layer',
+      parsed,
+    )
+    assertDockThemeRuntimeMatrix(
+      parsed.themeMatrix,
+      sourceThemeClassification,
+      'Fixture dock theme matrix failed',
+      parsed,
+    )
     assertLightDockColor(
       lightColor,
       'Fixture light dock background no longer matches the expected frosted light plate',
       parsed,
     )
-    assertDarkDockColor(darkColor, 'Fixture dark dock background does not match expected frosted dark plate', parsed)
+    assertDarkDockColor(
+      darkColor,
+      'Fixture dark dock background does not match expected frosted dark plate',
+      parsed,
+    )
     const lightScreenshot = await captureDockScreenshot(send, 'light')
     await send('Runtime.evaluate', {
       expression: "document.documentElement.setAttribute('data-theme', 'dark')",
     })
     await delay(50)
     const darkScreenshot = await captureDockScreenshot(send, 'dark')
+    const themeMatrixScreenshots = await captureDockThemeMatrixScreenshots(
+      send,
+      parsed.themeMatrix.map((item) => item.themeName),
+    )
 
     return {
       pass: true,
@@ -815,9 +978,14 @@ const runEdgeCdpFixtureCheck = async (builtCssFile, sourceThemeClassification, b
       labelRects: parsed.labelRects,
       lightDock: parsed.light,
       darkDock: parsed.dark,
+      themeMatrix: {
+        count: parsed.themeMatrix.length,
+        themes: parsed.themeMatrix.map((item) => item.themeName),
+      },
       screenshots: {
         light: lightScreenshot,
         dark: darkScreenshot,
+        themeMatrix: themeMatrixScreenshots,
       },
       servedRequests: servedRequests.slice(-20),
     }
@@ -834,7 +1002,7 @@ const fail = (message, details = {}) => {
   throw error
 }
 
-const captureDockScreenshot = async (send, themeName) => {
+const captureDockScreenshot = async (send, themeName, directory = screenshotRoot) => {
   const screenshot = await send('Page.captureScreenshot', {
     format: 'png',
     fromSurface: true,
@@ -849,8 +1017,8 @@ const captureDockScreenshot = async (send, themeName) => {
     })
   }
 
-  await mkdir(screenshotRoot, { recursive: true })
-  const filePath = join(screenshotRoot, `dock-fixture-${themeName}.png`)
+  await mkdir(directory, { recursive: true })
+  const filePath = join(directory, `dock-fixture-${toSafeFileSegment(themeName)}.png`)
   await writeFile(filePath, image)
 
   return {
@@ -859,12 +1027,173 @@ const captureDockScreenshot = async (send, themeName) => {
   }
 }
 
-const rgbDistance = (a, b) =>
-  Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2)
+const captureDockThemeMatrixScreenshots = async (send, themes) => {
+  const directory = join(screenshotRoot, 'theme-matrix')
+  const screenshots = []
+
+  for (const themeName of themes) {
+    await send('Runtime.evaluate', {
+      expression: `document.documentElement.setAttribute('data-theme', ${JSON.stringify(themeName)})`,
+    })
+    await delay(50)
+    screenshots.push({
+      themeName,
+      ...(await captureDockScreenshot(send, themeName, directory)),
+    })
+  }
+
+  return {
+    count: screenshots.length,
+    totalBytes: screenshots.reduce((sum, item) => sum + item.bytes, 0),
+    directory,
+    themes: screenshots.map((item) => item.themeName),
+    samples: screenshots.filter((_, index) => index === 0 || index === screenshots.length - 1),
+  }
+}
+
+const toSafeFileSegment = (value) => String(value).replace(/[^a-z0-9._-]+/gi, '-')
+
+const rgbDistance = (a, b) => Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2)
+
+const assertDockFixedLayer = (position, message, details = {}) => {
+  if (position !== 'fixed') {
+    fail(message, {
+      ...details,
+      position,
+    })
+  }
+}
+
+const assertDockHasFloatingShadow = (boxShadow, message, details = {}) => {
+  const normalized = String(boxShadow || '')
+    .trim()
+    .toLowerCase()
+  const layers = splitCssShadowLayers(normalized)
+  const outerLayers = layers.filter((layer) => !layer.includes('inset'))
+  const insetLayers = layers.filter((layer) => layer.includes('inset'))
+
+  if (!normalized || normalized === 'none' || !outerLayers.length || !insetLayers.length) {
+    fail(message, {
+      ...details,
+      boxShadow,
+      shadowLayers: layers,
+      outerLayers,
+      insetLayers,
+    })
+  }
+}
+
+const assertDockShellHasNoVisualLayer = (dock, message, details = {}) => {
+  const shellBackground = String(dock.shellBackgroundColor || '')
+    .trim()
+    .toLowerCase()
+  const shellShadow = String(dock.shellBoxShadow || '')
+    .trim()
+    .toLowerCase()
+  const shellFilter = String(dock.shellFilter || '')
+    .trim()
+    .toLowerCase()
+  const pseudoEntries = Object.entries(dock.pseudo || {})
+  const paintedPseudo = pseudoEntries.filter(([, pseudo]) => pseudoElementPaints(pseudo))
+
+  if (
+    (shellBackground && !isTransparentColor(shellBackground)) ||
+    (shellShadow && shellShadow !== 'none') ||
+    (shellFilter && shellFilter !== 'none') ||
+    paintedPseudo.length
+  ) {
+    fail(message, {
+      ...details,
+      shellBackgroundColor: dock.shellBackgroundColor,
+      shellBoxShadow: dock.shellBoxShadow,
+      shellFilter: dock.shellFilter,
+      paintedPseudo,
+    })
+  }
+}
+
+const pseudoElementPaints = (pseudo) => {
+  if (!pseudo) return false
+  const content = String(pseudo.content || '')
+    .trim()
+    .toLowerCase()
+  const display = String(pseudo.display || '')
+    .trim()
+    .toLowerCase()
+  const background = String(pseudo.backgroundColor || '')
+    .trim()
+    .toLowerCase()
+  const boxShadow = String(pseudo.boxShadow || '')
+    .trim()
+    .toLowerCase()
+  const filter = String(pseudo.filter || '')
+    .trim()
+    .toLowerCase()
+
+  if (!content || content === 'none' || content === 'normal') return false
+  if (display === 'none') return false
+  return (
+    !isTransparentColor(background) ||
+    (boxShadow && boxShadow !== 'none') ||
+    (filter && filter !== 'none')
+  )
+}
+
+const isTransparentColor = (color) => {
+  const normalized = String(color || '')
+    .trim()
+    .toLowerCase()
+  return (
+    !normalized ||
+    normalized === 'transparent' ||
+    normalized === 'rgba(0, 0, 0, 0)' ||
+    normalized === 'rgba(0 0 0 / 0)' ||
+    normalized === 'color(srgb 0 0 0 / 0)'
+  )
+}
+
+const splitCssShadowLayers = (value) => {
+  const layers = []
+  let depth = 0
+  let start = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (char === '(') depth += 1
+    else if (char === ')') depth = Math.max(0, depth - 1)
+    else if (char === ',' && depth === 0) {
+      layers.push(value.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+
+  layers.push(value.slice(start).trim())
+  return layers.filter(Boolean)
+}
 
 const assertDockBounds = (dock, message, details = {}) => {
-  if (dock.height < 50 || dock.height > 58 || dock.width < 300 || dock.width > 330) {
-    fail(message, details)
+  const viewportWidth = dock.frame?.width || dock.viewport?.width || details.frame?.width || 0
+  const expectedWidth =
+    viewportWidth > 0 && viewportWidth < EXPECTED_DOCK_WIDTH + 48
+      ? Math.max(0, viewportWidth - 48)
+      : EXPECTED_DOCK_WIDTH
+  const widthDelta = Math.abs(dock.width - expectedWidth)
+  const heightDelta = Math.abs(dock.height - EXPECTED_DOCK_HEIGHT)
+
+  if (widthDelta > DOCK_SIZE_EPSILON || heightDelta > DOCK_SIZE_EPSILON) {
+    fail(message, {
+      ...details,
+      actualDockSize: {
+        height: dock.height,
+        width: dock.width,
+      },
+      expectedDockSize: {
+        height: EXPECTED_DOCK_HEIGHT,
+        width: expectedWidth,
+      },
+      responsiveWidthApplied: viewportWidth > 0 && viewportWidth < EXPECTED_DOCK_WIDTH + 48,
+      viewportWidth,
+    })
   }
 }
 
@@ -875,8 +1204,7 @@ const assertDockSafeArea = (dock, message, details = {}) => {
   if (
     dock.safeAreaGap < 0 ||
     dock.safeAreaGap > 24 ||
-    shell.width < 300 ||
-    shell.width > 330 ||
+    Math.abs(shell.width - dock.width) > DOCK_SIZE_EPSILON ||
     shell.bottom > frame.bottom ||
     shell.top < frame.top ||
     dock.bottom > frame.bottom ||
@@ -939,6 +1267,90 @@ const assertDarkDockColor = (color, message, details = {}) => {
   }
 }
 
+const assertDockThemeRuntimeMatrix = (themeMatrix, themeClassification, message, details = {}) => {
+  if (!Array.isArray(themeMatrix) || themeMatrix.length !== themeClassification.allThemes.length) {
+    fail(message, {
+      ...details,
+      reason: 'theme matrix did not cover every theme',
+      expectedThemes: themeClassification.allThemes,
+      actualThemes: themeMatrix?.map((item) => item.themeName) || [],
+    })
+  }
+
+  const darkThemeSet = new Set(themeClassification.darkDockThemes)
+  const failures = []
+
+  for (const dock of themeMatrix) {
+    const color = parseRgb(dock.backgroundColor)
+    const themeName = dock.themeName
+    const expectedDark = darkThemeSet.has(themeName)
+
+    try {
+      assertDockFixedLayer(dock.shellPosition, 'Fixture theme dock shell is no longer fixed', dock)
+      assertDockBounds(dock, 'Fixture theme dock dimensions changed unexpectedly', dock)
+      assertDockSafeArea(dock, 'Fixture theme dock safe-area geometry changed unexpectedly', dock)
+      assertDockHasFloatingShadow(
+        dock.boxShadow,
+        'Fixture theme dock no longer renders as a lifted floating pill',
+        dock,
+      )
+      assertDockShellHasNoVisualLayer(
+        dock,
+        'Fixture theme dock shell rendered an extra visual layer',
+        dock,
+      )
+
+      if (!color) {
+        throw new Error('dock background color could not be parsed')
+      }
+
+      if (expectedDark) {
+        assertDarkDockColor(color, 'Fixture dark-side dock theme background mismatch', dock)
+      } else {
+        assertLightSideDockColor(
+          color,
+          'Fixture light-side dock theme background became too dark',
+          dock,
+        )
+      }
+    } catch (error) {
+      failures.push({
+        themeName,
+        expectedMode: expectedDark ? 'dark' : 'light',
+        backgroundColor: dock.backgroundColor,
+        shellPosition: dock.shellPosition,
+        shellBackgroundColor: dock.shellBackgroundColor,
+        shellBoxShadow: dock.shellBoxShadow,
+        shellFilter: dock.shellFilter,
+        boxShadow: dock.boxShadow,
+        height: dock.height,
+        width: dock.width,
+        safeAreaGap: dock.safeAreaGap,
+        error: error.message,
+      })
+    }
+  }
+
+  if (failures.length) {
+    fail(message, {
+      ...details,
+      failures,
+    })
+  }
+}
+
+const assertLightSideDockColor = (color, message, details = {}) => {
+  const luminance = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+
+  if (luminance < 220 || color.a < 0.65 || color.a > 0.8) {
+    fail(message, {
+      ...details,
+      parsedLightSide: color,
+      luminance,
+    })
+  }
+}
+
 const parseRgb = (value) => {
   const match = value.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/)
   if (match) {
@@ -976,7 +1388,11 @@ const extractAllThemesFromConstantSource = (source) => {
 }
 
 const extractDarkDockRuleThemes = (css) => {
-  const darkDockRules = [...css.matchAll(/([^{}]+)\{[^{}]*rgb\(28 28 30\s*\/\s*var\(--dock-bg-alpha,\s*(?:0?\.)?32\)\)[^{}]*\}/g)]
+  const darkDockRules = [
+    ...css.matchAll(
+      /([^{}]+)\{[^{}]*rgb\(28 28 30\s*\/\s*var\(--dock-bg-alpha,\s*(?:0?\.)?32\)\)[^{}]*\}/g,
+    ),
+  ]
 
   if (!darkDockRules.length) {
     return []
@@ -1008,7 +1424,9 @@ const assertDockThemeClassification = (css, allThemes, label) => {
     })
   }
 
-  const missingDarkThemes = expectedDarkDockThemes.filter((themeName) => !darkDockThemes.includes(themeName))
+  const missingDarkThemes = expectedDarkDockThemes.filter(
+    (themeName) => !darkDockThemes.includes(themeName),
+  )
   if (missingDarkThemes.length) {
     fail('Expected dark themes are missing from the dark dock background rule', {
       label,
@@ -1017,7 +1435,9 @@ const assertDockThemeClassification = (css, allThemes, label) => {
   }
 
   const expectedDarkThemeSet = new Set(expectedDarkDockThemes)
-  const unexpectedDarkThemes = darkDockThemes.filter((themeName) => !expectedDarkThemeSet.has(themeName))
+  const unexpectedDarkThemes = darkDockThemes.filter(
+    (themeName) => !expectedDarkThemeSet.has(themeName),
+  )
   if (unexpectedDarkThemes.length) {
     fail('Light-side themes are included in the dark dock background rule', {
       label,
@@ -1034,6 +1454,18 @@ const assertDockThemeClassification = (css, allThemes, label) => {
     allThemes,
     darkDockThemes,
     lightDockThemes,
+  }
+}
+
+const assertDefaultCustomThemeLightColorScheme = (source) => {
+  const defaultThemeMatch = source.match(/export\s+const\s+DEFAULT_THEME\s*=\s*\{([\s\S]*?)\n\}/)
+  if (!defaultThemeMatch?.[1]) fail('DEFAULT_THEME source block could not be located')
+
+  const colorSchemeMatch = defaultThemeMatch[1].match(/['"]color-scheme['"]\s*:\s*['"]([^'"]+)['"]/)
+  if (colorSchemeMatch?.[1] !== 'light') {
+    fail('DEFAULT_THEME uses light palette colors but does not opt into light color-scheme', {
+      colorScheme: colorSchemeMatch?.[1] || null,
+    })
   }
 }
 
@@ -1082,7 +1514,16 @@ try {
     !homePage.includes(':aria-label="$t(\'mainNavigation\')"') ||
     !homePage.includes(':aria-current="r === route.name ? \'page\' : undefined"')
   ) {
-    fail('HomePage dock source is missing nav or aria-current semantics')
+    fail('HomePage dock source is missing app-layer nav or aria-current semantics')
+  }
+  if (homePage.includes('<Teleport') && homePage.includes('dock-shell')) {
+    fail('HomePage dock source reintroduced body-level dock teleportation')
+  }
+  if (homePage.includes('dockStyle') || homePage.includes("bottom: 'calc(")) {
+    fail('HomePage dock source reintroduced an inline bottom override')
+  }
+  if (homePage.includes('name="v-slide-up"') && homePage.includes('dock-shell')) {
+    fail('HomePage dock source reintroduced a slide-up transform wrapper around the fixed dock')
   }
   if (
     !homePage.includes('type="button"') ||
@@ -1114,14 +1555,49 @@ try {
   if (!componentsCss.includes('rgb(28 28 30 / var(--dock-bg-alpha, 0.32))')) {
     fail('Dark dock source background override is missing')
   }
+  if (
+    !componentsCss.includes('box-shadow: none !important;') ||
+    componentsCss.includes('--dock-shadow-color')
+  ) {
+    fail('Dock source still allows an outer shell shadow or removed shadow variable')
+  }
+  if (!componentsCss.includes('.dock-shell') || !componentsCss.includes('position: fixed;')) {
+    fail('Dock shell source no longer keeps the mobile dock on a fixed viewport layer')
+  }
+  if (
+    !componentsCss.includes('.dock-shell::before') ||
+    !componentsCss.includes('.dock-shell::after') ||
+    !componentsCss.includes('.dock::before') ||
+    !componentsCss.includes('.dock::after')
+  ) {
+    fail('Dock source no longer suppresses shell and dock pseudo-element paint')
+  }
+  if (
+    !componentsCss.includes('height: 52px !important;') ||
+    !componentsCss.includes('max-height: 52px !important;')
+  ) {
+    fail('Dock source no longer pins the pill to a single 52px bar')
+  }
+  assertDockHasFloatingShadow(
+    componentsCss.match(/\.dock\s*\{[\s\S]*?box-shadow:\s*([^;]+);/)?.[1],
+    'Dock source CSS no longer gives the pill a controlled floating shadow',
+  )
   const allThemes = extractAllThemesFromConstantSource(constantsSource)
-  const sourceThemeClassification = assertDockThemeClassification(componentsCss, allThemes, 'source CSS')
+  assertDefaultCustomThemeLightColorScheme(constantsSource)
+  const sourceThemeClassification = assertDockThemeClassification(
+    componentsCss,
+    allThemes,
+    'source CSS',
+  )
 
   const builtCss = await readText(join(root, 'assets', builtCssFile))
   if (!builtCss.includes('.dock-button:focus-visible')) {
     fail('Built CSS is missing dock focus-visible rule', { builtCssFile })
   }
-  if (!builtCss.includes('height:44px!important') || !builtCss.includes('min-height:44px!important')) {
+  if (
+    !builtCss.includes('height:44px!important') ||
+    !builtCss.includes('min-height:44px!important')
+  ) {
     fail('Built CSS is missing dock button touch target floor', { builtCssFile })
   }
   if (
@@ -1137,7 +1613,30 @@ try {
   if (!builtCss.includes('rgb(28 28 30/var(--dock-bg-alpha,.32))')) {
     fail('Built CSS is missing dark dock rule', { builtCssFile })
   }
-  const buildThemeClassification = assertDockThemeClassification(builtCss, allThemes, `built CSS ${builtCssFile}`)
+  if (builtCss.includes('--dock-shadow-color')) {
+    fail('Built CSS still contains the removed dock outer shadow variable', { builtCssFile })
+  }
+  if (!builtCss.includes('.dock-shell{') || !builtCss.includes('position:fixed')) {
+    fail('Built CSS no longer keeps the mobile dock on a fixed viewport layer', { builtCssFile })
+  }
+  if (
+    !builtCss.includes('.dock-shell:before,.dock-shell:after') ||
+    !builtCss.includes('.dock:before,.dock:after') ||
+    !builtCss.includes('height:52px!important') ||
+    !builtCss.includes('max-height:52px!important')
+  ) {
+    fail('Built CSS no longer enforces a single fixed-height dock pill layer', { builtCssFile })
+  }
+  assertDockHasFloatingShadow(
+    builtCss.match(/\.dock\{[^{}]*box-shadow:([^;]+)!important/)?.[1],
+    'Built CSS dock rule no longer gives the pill a controlled floating shadow',
+    { builtCssFile },
+  )
+  const buildThemeClassification = assertDockThemeClassification(
+    builtCss,
+    allThemes,
+    `built CSS ${builtCssFile}`,
+  )
 
   let result
   if (shouldRunFixtureBrowser) {

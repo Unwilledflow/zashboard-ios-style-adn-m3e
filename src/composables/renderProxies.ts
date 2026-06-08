@@ -1,6 +1,7 @@
 import { NOT_CONNECTED, PROXY_SORT_TYPE } from '@/constant'
 import { isProxyGroup } from '@/helper'
 import { getLatencyByName } from '@/store/proxies'
+import { activeFolderNodeFilterForGroup } from '@/store/proxyFolders'
 import {
   hideUnavailableProxies,
   proxyGroupFilterMap,
@@ -34,6 +35,10 @@ const getRenderProxyState = (
   groupName: string | undefined,
   renderListEnabled: boolean,
 ) => {
+  if (!renderListEnabled) {
+    return { renderProxies: [], available: proxies.length }
+  }
+
   const latencyMap: LatencyMap = new Map()
   const getLatency: LatencyGetter = (name) => {
     const cached = latencyMap.get(name)
@@ -45,7 +50,7 @@ const getRenderProxyState = (
     return latency
   }
   const filtered = filterProxies(proxies, groupName, getLatency)
-  const renderProxies = renderListEnabled ? sortProxies(filtered, groupName, getLatency) : []
+  const renderProxies = sortProxies(filtered, groupName, getLatency)
   const available = countAvailableProxies(filtered, getLatency)
 
   return { renderProxies, available }
@@ -58,12 +63,16 @@ const filterProxies = (
 ) => {
   const keyword = isProxyNodeSearchMode.value ? proxySearchKeyword.value : ''
   const groupKeyword = groupName ? proxyGroupFilterMap.value[groupName] : ''
+  const activeFolderNodeFilter = groupName ? activeFolderNodeFilterForGroup(groupName) : null
 
-  if (!hideUnavailableProxies.value && !keyword && !groupKeyword) {
+  if (!hideUnavailableProxies.value && !keyword && !groupKeyword && !activeFolderNodeFilter) {
     return proxies
   }
 
   return proxies.filter((name) => {
+    if (activeFolderNodeFilter && !activeFolderNodeFilter.has(name)) {
+      return false
+    }
     if (hideUnavailableProxies.value && !isProxyGroup(name) && getLatency(name) <= NOT_CONNECTED) {
       return false
     }

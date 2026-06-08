@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { useCalculateMaxProxies } from '@/composables/proxiesScroll'
 import { handlerProxySelect } from '@/store/proxies'
+import {
+  activeFolderCanSelectNodes,
+  nodeIncludedInActiveFolder,
+  toggleNodeInActiveFolder,
+} from '@/store/proxyFolders'
 import { computed } from 'vue'
 import ProxyNodeCard from './ProxyNodeCard.vue'
 import ProxyNodeGrid from './ProxyNodeGrid.vue'
@@ -10,16 +14,10 @@ const props = defineProps<{
   name: string
   now?: string
   renderProxies: string[]
+  nestedScrollSurface?: boolean
 }>()
 
-const activeIndex = computed(() => props.renderProxies.indexOf(props.now ?? ''))
 const isVirtualGrid = computed(() => props.renderProxies.length > 200)
-const { maxProxies } = useCalculateMaxProxies(
-  () => props.renderProxies.length,
-  activeIndex,
-  () => !isVirtualGrid.value,
-)
-const proxies = computed(() => props.renderProxies.slice(0, maxProxies.value))
 </script>
 
 <template>
@@ -28,15 +26,23 @@ const proxies = computed(() => props.renderProxies.slice(0, maxProxies.value))
     :name="name"
     :now="now"
     :nodes="renderProxies"
+    :node-folder-selectable="activeFolderCanSelectNodes"
   />
-  <ProxyNodeGrid v-else>
+  <ProxyNodeGrid
+    v-else
+    :nested-scroll-surface="nestedScrollSurface"
+  >
     <ProxyNodeCard
-      v-for="node in proxies"
+      v-for="node in renderProxies"
       :key="node"
       :name="node"
       :group-name="name"
       :active="node === now"
+      :nested-scroll-surface="nestedScrollSurface"
+      :node-folder-selectable="activeFolderCanSelectNodes"
+      :node-folder-active="nodeIncludedInActiveFolder(name, node)"
       @click.stop="handlerProxySelect(name, node)"
+      @toggle-node-folder="toggleNodeInActiveFolder(name, node)"
     />
   </ProxyNodeGrid>
 </template>

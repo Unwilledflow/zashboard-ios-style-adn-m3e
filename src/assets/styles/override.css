@@ -349,9 +349,9 @@ textarea {
       saturate(var(--glass-saturation, 180%));
   }
 
-  /* `.dock` is intentionally absent — HomePage.vue `<Teleport to="body">`
-     moves it outside this ancestor, so listing it here would be dead code.
-     The dock keeps its own iOS-frosted plate from components.css. */
+  /* `.dock` is intentionally absent so the compact navigation keeps its own
+     single iOS-frosted pill from components.css instead of inheriting the
+     heavier generic blurred surface treatment. */
   .bg-base-150,
   .bg-base-200 {
     background-color: color-mix(in oklab, var(--color-base-200) var(--bg-tint, 90%), transparent);

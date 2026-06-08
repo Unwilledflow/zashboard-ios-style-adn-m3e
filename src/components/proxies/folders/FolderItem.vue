@@ -1,10 +1,10 @@
 <template>
   <button
     type="button"
-    class="group flex items-center gap-2 rounded-lg p-2 py-1 text-sm transition-colors"
+    class="proxy-folder-pill group"
     :class="[
       orientation === 'horizontal' ? 'shrink-0' : 'w-full text-left',
-      isActive ? 'bg-primary/15 text-primary' : 'hover:bg-base-200',
+      isActive ? 'is-active' : '',
     ]"
     :aria-label="accessibleLabel"
     @click="$emit('activate')"
@@ -12,14 +12,13 @@
     <component
       v-if="iconComponent"
       :is="iconComponent"
-      class="h-4 w-4 shrink-0"
+      class="proxy-folder-pill__icon"
       aria-hidden="true"
     />
-    <span class="truncate">{{ label }}</span>
+    <span class="proxy-folder-pill__label">{{ label }}</span>
     <span
       v-if="count !== undefined"
-      class="ml-auto shrink-0 text-xs tabular-nums"
-      :class="[isActive ? 'text-primary' : 'text-base-content/60']"
+      class="proxy-folder-pill__count"
     >
       {{ count }}
     </span>

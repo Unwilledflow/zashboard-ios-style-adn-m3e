@@ -44,6 +44,7 @@
                 {{ folderCount(f.id) }}
               </span>
               <button
+                v-if="isCustomFolder(f.id)"
                 type="button"
                 class="btn btn-circle btn-ghost btn-xs"
                 aria-label="Edit folder"
@@ -100,6 +101,7 @@ import {
   folderCount,
   folderManagerOpen,
   folders,
+  isCustomFolder,
   reorderFolders,
   type Folder,
 } from '@/store/proxyFolders'
@@ -127,7 +129,9 @@ const onReorder = (list: Folder[]) => {
 const onCreate = () => {
   const name = newName.value.trim()
   if (!name) return
-  createFolder(name)
+  const folder = createFolder(name)
+  activeFolderId.value = folder.id
+  editingId.value = folder.id
   newName.value = ''
 }
 

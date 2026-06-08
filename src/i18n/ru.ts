@@ -445,6 +445,11 @@ const ru: LANG_MESSAGE = {
   folder_preview: 'Автоматически подобранные группы',
   folder_no_matches: 'Нет подходящих групп',
   folder_delete_confirm: 'Удалить папку «{name}»?',
+  folder_manual_nodes: 'Node cards',
+  folder_filter_nodes_placeholder: 'Filter node cards',
+  folder_no_nodes: 'No node cards',
+  folder_add_node: 'Add to current folder',
+  folder_remove_node: 'Remove from current folder',
 }
 
 export default ru

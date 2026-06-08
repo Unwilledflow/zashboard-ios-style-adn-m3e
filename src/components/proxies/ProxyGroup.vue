@@ -74,17 +74,13 @@
 
 <script setup lang="ts">
 import { useBounceOnVisible } from '@/composables/bouncein'
+import { useProxyGroupLatencyTest } from '@/composables/proxyLatency'
 import { useRenderProxyList } from '@/composables/renderProxies'
-import { isHiddenGroup } from '@/helper'
+import { useProxyHiddenGroup } from '@/composables/proxies'
 import { checkTruncation } from '@/helper/tooltip'
 import { prettyBytesHelper } from '@/helper/utils'
 import { activeConnectionChainStats } from '@/store/connections'
-import {
-  handlerProxySelect,
-  hiddenGroupMap,
-  proxyGroupLatencyTest,
-  proxyMap,
-} from '@/store/proxies'
+import { handlerProxySelect, proxyMap } from '@/store/proxies'
 import {
   groupProxiesByProvider,
   manageHiddenGroup,
@@ -92,7 +88,7 @@ import {
   proxyGroupIconSize,
 } from '@/store/settings'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/outline'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import CollapseCard from '../common/CollapseCard.vue'
 import LatencyTag from './LatencyTag.vue'
@@ -112,53 +108,11 @@ const { t } = useI18n()
 const proxyGroup = computed(() => proxyMap.value[props.name])
 const allProxies = computed(() => proxyGroup.value.all ?? [])
 const { proxiesCount, renderProxies } = useRenderProxyList(allProxies, props.name)
-const isLatencyTesting = ref(false)
-let latencyTestController: AbortController | undefined
-let latencyTestSeq = 0
-
-const isCurrentLatencyTest = (controller: AbortController, seq: number) => {
-  return latencyTestController === controller && latencyTestSeq === seq
-}
-
-const handlerLatencyTest = async () => {
-  if (isLatencyTesting.value) return
-
-  latencyTestController?.abort()
-  const controller = new AbortController()
-  const seq = ++latencyTestSeq
-  latencyTestController = controller
-  isLatencyTesting.value = true
-  try {
-    await proxyGroupLatencyTest(props.name, undefined, controller.signal)
-  } catch {
-    // Request interceptor surfaces API failures; keep this click handler settled.
-  } finally {
-    if (isCurrentLatencyTest(controller, seq)) {
-      isLatencyTesting.value = false
-      latencyTestController = undefined
-    }
-  }
-}
+const { handlerLatencyTest, isLatencyTesting } = useProxyGroupLatencyTest(() => props.name)
 const downloadTotal = computed(() => {
   return activeConnectionChainStats.value.get(props.name)?.downloadSpeed ?? 0
 })
-
-const hiddenGroup = computed({
-  get: () => isHiddenGroup(props.name),
-  set: (value: boolean) => {
-    hiddenGroupMap.value[props.name] = value
-  },
-})
-
-const handlerGroupToggle = () => {
-  hiddenGroup.value = !hiddenGroup.value
-}
+const { handlerGroupToggle, hiddenGroup } = useProxyHiddenGroup(() => props.name)
 
 useBounceOnVisible()
-
-onBeforeUnmount(() => {
-  latencyTestController?.abort()
-  latencyTestSeq += 1
-  latencyTestController = undefined
-})
 </script>

@@ -20,7 +20,10 @@
           :name="node"
           :group-name="name"
           :active="node === now"
+          :node-folder-selectable="nodeFolderSelectable"
+          :node-folder-active="nodeIncludedInActiveFolder(name, node)"
           @click.stop="handlerProxySelect(name, node)"
+          @toggle-node-folder="toggleNodeInActiveFolder(name, node)"
         />
       </div>
     </div>
@@ -30,6 +33,7 @@
 <script setup lang="ts">
 import { PROXIES_PARENT_CLASS } from '@/helper/utils'
 import { handlerProxySelect } from '@/store/proxies'
+import { nodeIncludedInActiveFolder, toggleNodeInActiveFolder } from '@/store/proxyFolders'
 import { minProxyCardWidth, proxyCardSize } from '@/store/settings'
 import { PROXY_CARD_SIZE } from '@/constant'
 import { useElementSize } from '@vueuse/core'
@@ -41,6 +45,7 @@ const props = defineProps<{
   name: string
   now?: string
   nodes: string[]
+  nodeFolderSelectable?: boolean
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)

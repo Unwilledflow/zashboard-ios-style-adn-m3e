@@ -19,16 +19,25 @@ type ConnectionDisplayOptions = {
   showFullProxyChain: boolean
 }
 
-const getVisibleChains = (connection: Connection, options: ConnectionDisplayOptions) => {
+export const getConnectionRenderedChains = (
+  connection: Connection,
+  options: Pick<ConnectionDisplayOptions, 'mode' | 'showFullProxyChain'>,
+) => {
   let chains = connection.chains
 
   if ((options.mode === 'card' || !options.showFullProxyChain) && chains.length > 2) {
     chains = [chains[0], chains[chains.length - 1]]
   }
 
+  return [...chains].reverse()
+}
+
+const getVisibleChains = (connection: Connection, options: ConnectionDisplayOptions) => {
+  const chains = getConnectionRenderedChains(connection, options)
+
   return options.proxyChainDirection === PROXY_CHAIN_DIRECTION.REVERSE
-    ? chains
-    : [...chains].reverse()
+    ? [...chains].reverse()
+    : chains
 }
 
 export const getConnectionDisplayValue = (

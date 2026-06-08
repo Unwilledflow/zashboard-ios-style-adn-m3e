@@ -1,21 +1,24 @@
 import { disconnectByIdAPI, fetchConnectionsAPI } from '@/api'
-import { CONNECTION_TAB_TYPE, SORT_DIRECTION, SORT_TYPE } from '@/constant'
-import { getChainsStringFromConnection, getInboundUserFromConnection } from '@/helper'
-import { getConnectionVisibleSearchValues } from '@/helper/connection'
+import {
+  CONNECTION_TAB_TYPE,
+  CONNECTIONS_TABLE_ACCESSOR_KEY,
+  SORT_DIRECTION,
+  SORT_TYPE,
+} from '@/constant'
+import {
+  getChainsStringFromConnection,
+  getHostFromConnection,
+  getInboundUserFromConnection,
+  getNetworkTypeFromConnection,
+  getProcessFromConnection,
+} from '@/helper'
 import { toSearchRegex } from '@/helper/search'
+import { prettyBytesHelper } from '@/helper/utils'
 import type { Connection, ConnectionRawMessage } from '@/types'
 import { useStorage } from '@vueuse/core'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { initAggregatedDataMap, saveConnectionHistory } from './connHistory'
-import {
-  autoDisconnectIdleUDP,
-  autoDisconnectIdleUDPTime,
-  connectionCardLines,
-  connectionTableColumns,
-  isConnectionCard,
-  proxyChainDirection,
-  showFullProxyChain,
-} from './settings'
+import { autoDisconnectIdleUDP, autoDisconnectIdleUDPTime, isConnectionCard } from './settings'
 import { activeBackend } from './setup'
 
 export const connectionTabShow = ref(CONNECTION_TAB_TYPE.ACTIVE)
@@ -52,6 +55,7 @@ export interface ConnectionChainStats {
 
 interface ConnectionDerivedData {
   chainsText: string
+  displayValues: Partial<Record<CONNECTIONS_TABLE_ACCESSOR_KEY, string>>
   inboundUser: string
   searchFields: string[]
   startTime: number
@@ -67,9 +71,30 @@ const ensureConnectionDerivedData = (connection: Connection) => {
     return derived
   }
 
+  const networkTypeText = getNetworkTypeFromConnection(connection)
+  const inboundUser = getInboundUserFromConnection(connection)
+  const displayValues: Partial<Record<CONNECTIONS_TABLE_ACCESSOR_KEY, string>> = {
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Type]: networkTypeText,
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Process]: getProcessFromConnection(connection),
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Host]: getHostFromConnection(connection),
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Rule]: connection.rulePayload
+      ? `${connection.rule}: ${connection.rulePayload}`
+      : connection.rule,
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Outbound]: connection.chains[0] || '',
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed]: `${prettyBytesHelper(connection.downloadSpeed)}/s`,
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed]: `${prettyBytesHelper(connection.uploadSpeed)}/s`,
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Download]: prettyBytesHelper(connection.download),
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.Upload]: prettyBytesHelper(connection.upload),
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.SourcePort]: connection.metadata.sourcePort,
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.SniffHost]: connection.metadata.sniffHost || '-',
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.RemoteAddress]: connection.metadata.remoteDestination || '-',
+    [CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser]: inboundUser,
+  }
+
   derived = {
     chainsText: getChainsStringFromConnection(connection),
-    inboundUser: getInboundUserFromConnection(connection),
+    displayValues,
+    inboundUser,
     searchFields: [
       connection.metadata.host,
       connection.metadata.destinationIP,
@@ -89,7 +114,7 @@ const ensureConnectionDerivedData = (connection: Connection) => {
       connection.rulePayload,
     ],
     startTime: Date.parse(connection.start),
-    typeText: connection.metadata.type + connection.metadata.network,
+    typeText: `${connection.metadata.type}${connection.metadata.network}`,
   }
 
   connectionDerivedData.set(connection, derived)
@@ -97,12 +122,29 @@ const ensureConnectionDerivedData = (connection: Connection) => {
   return derived
 }
 
+export const getConnectionStartTime = (connection: Connection) => {
+  return ensureConnectionDerivedData(connection).startTime
+}
+
+export const getConnectionCachedDisplayValue = (
+  connection: Connection,
+  key: CONNECTIONS_TABLE_ACCESSOR_KEY,
+) => {
+  const derived = ensureConnectionDerivedData(connection)
+  return derived.displayValues[key]
+}
+
 export const activeConnectionChainStats = computed(() => {
   const stats = new Map<string, ConnectionChainStats>()
 
   for (const conn of activeConnections.value) {
-    for (const chain of new Set(conn.chains)) {
+    for (let index = 0; index < conn.chains.length; index += 1) {
+      const chain = conn.chains[index]
+
       if (!chain) {
+        continue
+      }
+      if (conn.chains.indexOf(chain) !== index) {
         continue
       }
 
@@ -312,14 +354,6 @@ export const renderConnections = computed(() => {
   const searchRegex = connectionFilter.value ? toSearchRegex(connectionFilter.value) : null
   const hideRegex = quickFilterEnabled.value ? toSearchRegex(quickFilterRegex.value) : null
   const sourceIPFilterSet = sourceIPFilter.value === null ? null : new Set(sourceIPFilter.value)
-  const displayOptions = {
-    mode: isConnectionCard.value ? ('card' as const) : ('table' as const),
-    proxyChainDirection: proxyChainDirection.value,
-    showFullProxyChain: showFullProxyChain.value,
-  }
-  const visibleKeys = isConnectionCard.value
-    ? connectionCardLines.value.flat()
-    : connectionTableColumns.value
 
   const shouldFilter = sourceIPFilterSet !== null || searchRegex !== null || hideRegex !== null
   const filteredConnections = shouldFilter
@@ -332,7 +366,7 @@ export const renderConnections = computed(() => {
           return true
         }
 
-        const visibleValues = getConnectionVisibleSearchValues(conn, visibleKeys, displayOptions)
+        const visibleValues = ensureConnectionDerivedData(conn).searchFields
 
         if (hideRegex && hideRegex.testAny(visibleValues)) {
           return false
@@ -347,15 +381,16 @@ export const renderConnections = computed(() => {
     : connections.value.slice()
 
   return filteredConnections.sort((a, b) => {
-    if (isConnectionCard.value && isDesc.value) {
-      ;[a, b] = [b, a]
-    }
-    const sortResult = isConnectionCard.value
-      ? sortFunctionMap[connectionSortType.value](a, b)
+    const sortAsCard = isConnectionCard.value
+    const sortDescending = sortAsCard && isDesc.value
+    const prev = sortDescending ? b : a
+    const next = sortDescending ? a : b
+    const sortResult = sortAsCard
+      ? sortFunctionMap[connectionSortType.value](prev, next)
       : sortFunctionMap[SORT_TYPE.HOST](a, b)
 
     if (sortResult === 0) {
-      return a.id.localeCompare(b.id)
+      return prev.id.localeCompare(next.id)
     }
 
     return sortResult

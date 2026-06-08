@@ -183,24 +183,7 @@
               v-for="cell in rows[virtualRow.index].getVisibleCells()"
               :key="cell.id"
               :class="[
-                isManualTable
-                  ? 'truncate text-sm'
-                  : twMerge(
-                      'text-sm whitespace-nowrap',
-                      [
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.Download,
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed,
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.Upload,
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed,
-                      ].includes(cell.column.id as CONNECTIONS_TABLE_ACCESSOR_KEY) && 'min-w-20',
-                      CONNECTIONS_TABLE_ACCESSOR_KEY.Host ===
-                        (cell.column.id as CONNECTIONS_TABLE_ACCESSOR_KEY) && 'max-w-xs truncate',
-                      [
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.Chains,
-                        CONNECTIONS_TABLE_ACCESSOR_KEY.Rule,
-                      ].includes(cell.column.id as CONNECTIONS_TABLE_ACCESSOR_KEY) &&
-                        'max-w-xl truncate',
-                    ),
+                getConnectionCellClass(cell.column.id as CONNECTIONS_TABLE_ACCESSOR_KEY),
                 cell.column.getIsPinned &&
                   cell.column.getIsPinned() === 'left' &&
                   `pinned-td sticky left-0 z-20 ${inheritedStyle}`,
@@ -247,7 +230,7 @@
 </template>
 
 <script setup lang="ts">
-import { blockConnectionByIdAPI, disconnectByIdAPI } from '@/api'
+import ConnectionActions from '@/components/connections/ConnectionActions'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useConnections } from '@/composables/connections'
 import {
@@ -257,10 +240,16 @@ import {
   TABLE_SIZE,
   TABLE_WIDTH_MODE,
 } from '@/constant'
-import { getConnectionDisplayValue } from '@/helper/connection'
+import { getConnectionDisplayValue, getConnectionRenderedChains } from '@/helper/connection'
 import { backgroundImage } from '@/helper/indexeddb'
 import { showNotification } from '@/helper/notification'
-import { connectionFilter, connectionTabShow, renderConnections } from '@/store/connections'
+import {
+  connectionFilter,
+  connectionTabShow,
+  getConnectionCachedDisplayValue,
+  getConnectionStartTime,
+  renderConnections,
+} from '@/store/connections'
 import {
   connectionTableColumns,
   proxyChainDirection,
@@ -277,7 +266,6 @@ import {
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
   MapPinIcon,
-  NoSymbolIcon,
   XMarkIcon,
 } from '@heroicons/vue/24/outline'
 import {
@@ -298,8 +286,6 @@ import {
 } from '@tanstack/vue-table'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useStorage } from '@vueuse/core'
-import dayjs from 'dayjs'
-import { twMerge } from 'tailwind-merge'
 import { computed, h, onBeforeUnmount, ref, type VNode } from 'vue'
 import { useI18n } from 'vue-i18n'
 import HighlightText from '../common/HighlightText.vue'
@@ -326,7 +312,45 @@ const columnWidthMap = useStorage('config/table-column-width', {
 
 const isManualTable = computed(() => tableWidthMode.value === TABLE_WIDTH_MODE.MANUAL)
 const { t } = useI18n()
+const compactMetricColumns = new Set<CONNECTIONS_TABLE_ACCESSOR_KEY>([
+  CONNECTIONS_TABLE_ACCESSOR_KEY.Download,
+  CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed,
+  CONNECTIONS_TABLE_ACCESSOR_KEY.Upload,
+  CONNECTIONS_TABLE_ACCESSOR_KEY.UlSpeed,
+])
+const wideTextColumns = new Set<CONNECTIONS_TABLE_ACCESSOR_KEY>([
+  CONNECTIONS_TABLE_ACCESSOR_KEY.Chains,
+  CONNECTIONS_TABLE_ACCESSOR_KEY.Rule,
+])
+const hiddenColumnVisibility = Object.fromEntries(
+  Object.values(CONNECTIONS_TABLE_ACCESSOR_KEY).map((key) => [key, false]),
+) as Record<CONNECTIONS_TABLE_ACCESSOR_KEY, boolean>
+const getConnectionCellClass = (columnId: CONNECTIONS_TABLE_ACCESSOR_KEY) => {
+  if (isManualTable.value) {
+    return 'truncate text-sm'
+  }
+
+  if (columnId === CONNECTIONS_TABLE_ACCESSOR_KEY.Host) {
+    return 'text-sm whitespace-nowrap max-w-xs truncate'
+  }
+
+  if (compactMetricColumns.has(columnId)) {
+    return 'text-sm whitespace-nowrap min-w-20'
+  }
+
+  if (wideTextColumns.has(columnId)) {
+    return 'text-sm whitespace-nowrap max-w-xl truncate'
+  }
+
+  return 'text-sm whitespace-nowrap'
+}
 const getTableDisplayValue = (connection: Connection, key: CONNECTIONS_TABLE_ACCESSOR_KEY) => {
+  const cachedValue = getConnectionCachedDisplayValue(connection, key)
+
+  if (cachedValue !== undefined) {
+    return cachedValue
+  }
+
   return getConnectionDisplayValue(connection, key, {
     mode: 'table',
     proxyChainDirection: proxyChainDirection.value,
@@ -338,10 +362,26 @@ const highlightedCell =
   (key: CONNECTIONS_TABLE_ACCESSOR_KEY) =>
   ({ row }: { row: Row<Connection> }) => {
     return h(HighlightText, {
-      text: getTableDisplayValue(row.original, key),
+      text: row.getValue<string>(key),
       filter: connectionFilter.value,
     })
   }
+
+const getColumnVisibility = () => {
+  const visibility = { ...hiddenColumnVisibility }
+  const shouldHideCloseColumn = connectionTabShow.value === CONNECTION_TAB_TYPE.CLOSED
+
+  for (const key of connectionTableColumns.value) {
+    if (key === CONNECTIONS_TABLE_ACCESSOR_KEY.Close && shouldHideCloseColumn) {
+      continue
+    }
+
+    visibility[key] = true
+  }
+
+  return visibility
+}
+const columnVisibility = computed(getColumnVisibility)
 
 const columns: ColumnDef<Connection>[] = [
   {
@@ -349,53 +389,7 @@ const columns: ColumnDef<Connection>[] = [
     enableSorting: false,
     id: CONNECTIONS_TABLE_ACCESSOR_KEY.Close,
     cell: ({ row }) => {
-      const closeButton = h(
-        'button',
-        {
-          class: 'btn btn-xs btn-circle',
-          'aria-label': t('disconnectConnection'),
-          title: t('disconnectConnection'),
-          onClick: (e) => {
-            const connection = row.original
-
-            e.stopPropagation()
-            void disconnectByIdAPI(connection.id).catch(() => {})
-          },
-        },
-        [
-          h(XMarkIcon, {
-            class: 'h-4 w-4',
-            'aria-hidden': 'true',
-          }),
-        ],
-      )
-
-      if (row.original.metadata.smartBlock === 'normal') {
-        const degradeButton = h(
-          'button',
-          {
-            class: 'btn btn-xs btn-circle',
-            'aria-label': t('blockConnection'),
-            title: t('blockConnection'),
-            onClick: (e) => {
-              const connection = row.original
-
-              e.stopPropagation()
-              void blockConnectionByIdAPI(connection.id).catch(() => {})
-            },
-          },
-          [
-            h(NoSymbolIcon, {
-              class: 'h-4 w-4',
-              'aria-hidden': 'true',
-            }),
-          ],
-        )
-
-        return h('div', { class: 'flex gap-1' }, [closeButton, degradeButton])
-      }
-
-      return closeButton
+      return h(ConnectionActions, { conn: row.original })
     },
   },
   {
@@ -437,30 +431,33 @@ const columns: ColumnDef<Connection>[] = [
     cell: ({ row }) => {
       const chains: VNode[] = []
       const isReverse = proxyChainDirection.value === PROXY_CHAIN_DIRECTION.REVERSE
-      let originChains = row.original.chains
+      const originChains = getConnectionRenderedChains(row.original, {
+        mode: 'table',
+        showFullProxyChain: showFullProxyChain.value,
+      }).reverse()
 
-      if (!showFullProxyChain.value && originChains.length > 2) {
-        originChains = [originChains[0], originChains[originChains.length - 1]]
+      if (originChains.length === 0) {
+        originChains.push('')
       }
 
-      // 完整显示所有代理链
-      originChains.forEach((chain, index) => {
-        chains.unshift(h(ProxyName, { name: chain, key: chain, filter: connectionFilter.value }))
+      for (let index = originChains.length - 1; index >= 0; index -= 1) {
+        const chain = originChains[index]
+        chains.push(h(ProxyName, { name: chain, key: chain, filter: connectionFilter.value }))
 
-        if (index < originChains.length - 1) {
-          chains.unshift(
+        if (index > 0) {
+          chains.push(
             h(ArrowRightCircleIcon, {
               class: 'h-4 w-4 shrink-0',
-              key: `arrow-${index}`,
+              key: `arrow-${index - 1}`,
             }),
           )
         }
-      })
+      }
 
       return h(
         'div',
         {
-          class: `flex items-center ${isReverse && 'flex-row-reverse justify-end'} gap-1`,
+          class: ['flex items-center gap-1', isReverse && 'flex-row-reverse justify-end'],
         },
         chains,
       )
@@ -483,7 +480,7 @@ const columns: ColumnDef<Connection>[] = [
       getTableDisplayValue(original, CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime),
     cell: highlightedCell(CONNECTIONS_TABLE_ACCESSOR_KEY.ConnectTime),
     sortingFn: (prev, next) =>
-      dayjs(next.original.start).valueOf() - dayjs(prev.original.start).valueOf(),
+      getConnectionStartTime(next.original) - getConnectionStartTime(prev.original),
   },
   {
     header: () => t(CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed),
@@ -588,20 +585,7 @@ const tanstackTable = useVueTable({
       return connectionTableColumns.value
     },
     get columnVisibility() {
-      return {
-        ...Object.fromEntries(
-          Object.values(CONNECTIONS_TABLE_ACCESSOR_KEY).map((key) => [key, false]),
-        ),
-        ...Object.fromEntries(
-          connectionTableColumns.value
-            .filter(
-              (key) =>
-                key !== CONNECTIONS_TABLE_ACCESSOR_KEY.Close ||
-                connectionTabShow.value !== CONNECTION_TAB_TYPE.CLOSED,
-            )
-            .map((key) => [key, true]),
-        ),
-      }
+      return columnVisibility.value
     },
     get grouping() {
       return grouping.value

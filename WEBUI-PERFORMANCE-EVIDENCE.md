@@ -22,11 +22,55 @@ Date: 2026-06-06
 - `renderProxies` now uses a lazy cached latency getter inside each derived state instead of building a full latency map before filtering, sorting, and counting.
 - `VirtualProxyNodeGrid` now renders from precomputed visible row slices instead of calling a template helper that slices row nodes during render.
 - Mobile `ProxyGroupForMobile` now delays full sorted `renderProxies` output until expanded content is displayed, while keeping the title count derived from the filtered list.
-- Mobile `ProxyGroupForMobile` now derives its transition watchdog from the active panel's computed transition duration/delay, so expanded content state still settles when `transitionend` is skipped or CSS timing changes.
+- Mobile `ProxyGroupForMobile` no longer animates the expanded panel's width/transform and no longer waits on `transitionend` or computed transition fallback timers; expanded content state settles immediately after the rAF style calculation.
 - Scroll verification now records scrollTop before/after positions for long frame samples, making provider-expanded RAF tails easier to distinguish from DOM/resource/layout churn.
 - Expanded mobile proxy mode now marks the hidden dock as `inert` and `aria-hidden`, so it is removed from sequential keyboard focus and the accessibility tree while the expanded panel owns the interaction.
 - App-browser verification now checks expanded dock semantics directly: hit surface hidden, programmatic focus rejected, Tab traversal stays in the panel, and the `Main navigation` landmark is absent from the accessibility tree only while expanded.
 - App-browser verification now closes the expanded panel after the expanded screenshot and checks that the dock restores `aria-hidden`, `inert`, pointer events, opacity, focusability, and the `Main navigation` accessibility landmark.
+- Mobile dock styling now keeps the bottom tab bar as a single floating pill: `.dock-shell` is transparent with no shadow/filter, and `.dock` no longer renders the previous outer `0 8px` shadow layer.
+- Mobile dock styling now keeps `.dock-shell` on a fixed viewport layer, so custom backgrounds, scrolling pages, and proxy folder panels cannot make the bottom tab bar look attached to page content.
+- Mobile dock rendering now removes the `v-slide-up` transform wrapper around the fixed dock and pins the dock to a single `52px` paint box, preventing a second visual layer from appearing behind the floating capsule.
+- Dock CSS now suppresses `.dock-shell` and `.dock` pseudo-element paint, and the verification scripts fail if shell/dock pseudo-elements, variable outer shadows, or non-fixed dock layers return.
+- Dock runtime verification now checks `.dock-shell` computed `backgroundColor`, `boxShadow`, `filter`, and the `::before` / `::after` computed styles on both `.dock-shell` and `.dock`, so a browser-only extra visual layer fails the gate.
+- Dock fixture verification now runs a real browser theme matrix across all `ALL_THEME` entries, checking that dark-side themes keep the dark frosted dock and light-side themes remain visibly light instead of accidentally inheriting the dark dock plate.
+- Dock fixture verification now captures a screenshot for every theme in the all-theme matrix, so the floating capsule can be reviewed visually instead of relying only on computed styles.
+- Dock verification now rejects any non-inset `box-shadow` layer instead of only matching the previous `0 8px` shadow pattern.
+- The configured-app custom proxy folder workflow now rechecks dock fixed positioning, safe-area geometry, and single-inset shadow after creating and activating a custom folder.
+- Connections filtering reuses cached derived `searchFields` and source IP `Set` membership, avoiding per-row visible-value reconstruction during filter/sort passes.
+- Connection cards now render only fields present in the user's visible card lines instead of prebuilding every possible field component for each visible row.
+- Connection table now reuses cached parsed connection start times for connect-time sorting and uses stable Set-backed cell class selection instead of per-cell array creation and `tailwind-merge`.
+- Connection table and card display accessors now reuse cached derived values for stable fields such as type, process, host, rule, outbound, traffic counters, speed counters, source port, sniff host, remote address, and inbound user before falling back to the generic display helper.
+- Connection derived display caching now computes network type and inbound user once per row, then reuses those local values in the display-value cache instead of keeping redundant derived fields.
+- Connection cards now skip hidden close actions in a single line-render pass instead of allocating filtered line arrays during card rendering.
+- Connection table chain cells now build proxy-chain VNodes with a reverse index loop and `push`, avoiding repeated `unshift` array moves and preventing false class tokens in non-reverse mode.
+- Connection table highlighted cells now reuse TanStack row accessor values via `row.getValue`, avoiding a second display-value call during cell rendering.
+- Connection table column visibility now uses a single-pass helper with a shared hidden-column baseline instead of rebuilding multiple `Object.fromEntries` maps in the getter.
+- Connection cards now skip `HighlightText` component creation when the search filter is empty and avoid initializing the scroll-triggered animation hook in each card instance.
+- Connection card rows no longer carry `.connection-row` transition or transform work in the virtual-scroll render path; active feedback remains an immediate background-color change.
+- Connection card virtual scrolling now uses a tuned mobile `overscan` of `16`, reducing rendered card rows during route scroll sampling from `33` to `25` without increasing coupled long tasks.
+- Scroll verification now auto-selects an available Edge CDP port when the default port is busy, while preserving explicit `ZASHBOARD_SCROLL_VERIFY_CDP_PORT` and `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT` overrides.
+- Nested-scroll proxy cards now use a lighter `background-color,transform` transition and avoid carrying `box-shadow` / `border-color` transition work into expanded provider-grouped panels; default non-nested cards keep the full visual transition.
+- Dist package verification now parses the ZIP central directory without external dependencies and rejects unsafe paths, nested `dist/` packaging, or missing `index.html`, `sw.js`, `manifest.webmanifest`, root PWA icons, and built JS/CSS assets.
+- Scroll-triggered item entrance animations are disabled: `useBounceOnVisible` is now a no-op compatibility shim, the `bounce-in` CSS animation was removed, mobile route enter slide/fade classes were removed, and swipe gestures no longer apply drag-follow transforms.
+- Proxy node cards now avoid `tailwind-merge` during card render by using stable precomputed class branches for active, nested-scroll, default, and size states.
+- The obsolete scroll animation setting was removed from runtime settings paths after the animation removal, so Settings no longer exposes a toggle that cannot affect scrolling behavior.
+- Proxy node cards now reuse the global i18n translator instead of initializing `useI18n()` for every rendered card instance.
+- Small proxy lists now skip lazy-render size measurement and infinite-scroll listener attachment entirely; lazy rendering only activates after the list exceeds the `200` node stability threshold.
+- Nested-scroll proxy cards are now static low-paint cards: no card transition, no active scale transform, no hover paint branch, and no active shadow while inside expanded mobile panels.
+- Nested-scroll proxy cards also force compact spacing inside expanded mobile panels, which lets the ordinary `12`-node expanded panel fit at `390 x 844` without creating an internal scroll surface.
+- Scroll smoothness verification now records scroll-event diagnostics for frame sampling, including max scroll distance, step count, average step distance, scroll event count, and max scroll event interval.
+- Scroll smoothness verification now allows an expanded mobile panel to be non-scrollable when its content fully fits, while still requiring the compact `390 x 700` viewport to preserve nested scrolling.
+- Provider-grouped expanded sections now use `contain: layout style paint` plus `content-visibility: auto`, letting offscreen provider sections skip rendering work during nested panel scrolling.
+- Nested proxy grids now tighten their gap from `gap-2` to `gap-1` and add `contain: layout style paint`; provider-grouped nested headings also use compact `my-1 text-xs` spacing.
+- Flat non-virtual proxy content now renders small lists directly instead of calling `useCalculateMaxProxies`; lists over `200` nodes still use `VirtualProxyNodeGrid`.
+- Mobile collapsed proxy groups now skip `filterProxies`, sorting, and full latency-based availability counts while `renderListEnabled` is false; expanded groups still compute the accurate filtered/sorted list and availability count.
+- Connection chain stats now dedupe repeated chains with an indexed loop instead of allocating `new Set(conn.chains)` for every active connection.
+- Scroll verification now sends `240` stable mock Connections rows over `/connections` WebSocket and samples the real Connections virtual-scroll surface during app-browser checks.
+- Route smooth-scroll surface verification now waits for settled frames and rejects disconnected DOM nodes, avoiding stale route elements during hash navigation.
+- Logs cards no longer carry `transition-colors` / `duration-*` classes in the virtual-scroll render path.
+- Logs cards now skip `HighlightText` component creation for type, time, and payload when the search filter is empty, leaving the common no-filter stream path as plain text render work.
+- Logs route virtual scrolling now uses fixed `64px` rows and disables runtime row measurement, preventing payload wrapping from changing total scroll height during scroll sampling.
+- Scroll verification now sends `360` stable mock Logs rows over `/logs` WebSocket and samples the real Logs virtual-scroll surface during app-browser checks.
 
 ## Dock Invariants Rechecked
 
@@ -34,6 +78,10 @@ Date: 2026-06-06
 - Fixture dock buttons: `60 x 44`.
 - Light dock background: `color(srgb 1 1 1 / 0.72)`.
 - Dark dock background: `rgba(28, 28, 30, 0.32)`.
+- Dock shadow: single inset `0px 0px 0px 0.5px` stroke only; no outer shadow layer.
+- Dock shell positioning: `fixed` in fixture and configured-app browser checks.
+- Dock shell mount point: `HomePage.vue` teleports the mobile dock to `body`; configured-app browser checks report `shellParentTag: "BODY"` so the dock is no longer inside the transformed route layer or scroll container.
+- Custom folder workflow dock state: shell remains `fixed`, dock stays `320 x 52`, safe-area gap stays `14px`, and shadow remains a single inset stroke.
 - Expanded mobile proxy mode hides the dock hit surface.
 - Normal bottom content remains reachable without dock interception.
 
@@ -41,22 +89,185 @@ Date: 2026-06-06
 
 - `node --check scripts\verify-scroll-smoothness.mjs`: pass.
 - `npx vue-tsc --build --force`: pass.
-- `npx eslint scripts\verify-scroll-smoothness.mjs src\views\HomePage.vue src\components\proxies\ProxyGroupForMobile.vue src\components\proxies\ProxyGroup.vue src\composables\renderProxies.ts`: pass.
+- `npx eslint scripts\verify-scroll-smoothness.mjs src\components\connections\ConnectionCard.tsx src\components\connections\ConnectionTable.vue src\store\connections.ts`: pass.
 - `npm run build`: pass.
 - `npm run verify:scroll-smoothness:app-browser`: pass.
 - `npm run verify:scroll-smoothness:provider-app-browser`: pass.
 - `npm run verify:mobile-dock:fixture-browser`: pass.
+- `node --check scripts\verify-dist-package.mjs`: pass.
+- `npm run verify:dist-package`: pass.
+- `npx eslint src/composables/bouncein.ts src/composables/swipe.ts src/views/HomePage.vue src/router/index.ts src/components/proxies/ProxyNodeCard.vue scripts/verify-scroll-smoothness.mjs`: pass.
+- `npx vue-tsc --build --force`: pass after scroll animation removal.
+- `node --check scripts\verify-scroll-smoothness.mjs`: pass after scroll animation removal.
+- `npm run build`: pass after scroll animation removal.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.scrollAnimationsRemoved: true`.
+- `npm run verify:scroll-smoothness:app-browser`: pass after scroll animation removal.
+- `npm run verify:scroll-smoothness:provider-app-browser`: pass after scroll animation removal.
+- `npx eslint src/components/settings/general/GeneralSettings.vue src/store/settings.ts src/config/settingsItems.ts src/components/proxies/ProxyNodeCard.vue scripts/verify-scroll-smoothness.mjs`: pass after removing the obsolete scroll animation setting and per-card `useI18n()`.
+- `npx vue-tsc --build --force`: pass after removing the obsolete scroll animation setting and per-card `useI18n()`.
+- `node --check scripts\verify-scroll-smoothness.mjs`: pass after adding the obsolete-setting and per-card-i18n source checks.
+- `npm run build`: pass after removing the obsolete scroll animation setting and per-card `useI18n()`.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.scrollAnimationsRemoved: true` and the added runtime-settings/per-card-i18n source checks.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9245 npm run verify:scroll-smoothness:app-browser`: pass. The first default-port rerun failed because Edge could not bind `127.0.0.1:9235` while the port was in `TIME_WAIT`; rerunning with a clean CDP port verified the app path.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9246 npm run verify:scroll-smoothness:provider-app-browser`: pass after the same cleanup.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9247 npm run verify:scroll-smoothness:app-browser`: pass after removing mobile expanded-panel transition overhead.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9248 npm run verify:scroll-smoothness:provider-app-browser`: pass after removing mobile expanded-panel transition overhead.
+- `npx eslint src/components/proxies/ProxyNodeCard.vue src/composables/proxiesScroll.ts scripts/verify-scroll-smoothness.mjs`: pass after skipping small-list lazy listeners and removing nested card transitions.
+- `npx vue-tsc --build --force`: pass after skipping small-list lazy listeners and removing nested card transitions.
+- `npm run build`: pass after skipping small-list lazy listeners and removing nested card transitions.
+- `npm run verify:scroll-smoothness`: pass with small-list lazy guard and static nested-card source checks.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9250 npm run verify:scroll-smoothness:provider-app-browser`: pass after static nested-card tuning.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9251 npm run verify:scroll-smoothness:app-browser`: pass after static nested-card tuning.
+- `node --check scripts\verify-scroll-smoothness.mjs`: pass after adding scroll-event diagnostics.
+- `npx eslint src/components/proxies/ProxiesByProvider.vue scripts/verify-scroll-smoothness.mjs`: pass after adding provider section containment and scroll diagnostics.
+- `npx vue-tsc --build --force`: pass after adding provider section containment.
+- `npm run build`: pass after adding provider section containment.
+- `npm run verify:scroll-smoothness`: pass with provider section containment and scroll diagnostics source checks.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9252 npm run verify:scroll-smoothness:provider-app-browser`: pass with scroll diagnostics; provider-expanded nested scroll reported `p95: 33.4ms`, `max: 33.5ms`, and `0` long samples.
+- `3x ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9259..9261 npm run verify:scroll-smoothness:provider-app-browser`: pass after provider section containment. Worst `p95` was `33.4ms`, worst `max` was `50ms`, and only `1` total long sample appeared across the three runs.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9262 npm run verify:scroll-smoothness:app-browser`: pass after provider section containment; main Proxies page scroll reported `p95: 16.7ms`, `max: 16.7ms`, and `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9268 npm run verify:scroll-smoothness:app-browser`: pass after compact nested cards and non-scrollable expanded-panel verifier support; main Proxies page scroll reported `p95: 16.7ms`, `max: 16.7ms`, and expanded ordinary panel reported `scrollHeight/clientHeight: 404/404`.
+- `3x ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9269..9271 npm run verify:scroll-smoothness:app-browser`: pass after compact nested cards. Worst main-page `p95` was `16.7ms`, worst main frame was `16.8ms`, worst expanded `p95` was `16.8ms`, worst expanded frame was `16.8ms`, and both paths had `0` long samples.
+- `npx eslint src/components/proxies/ProxyNodeGrid.vue src/components/proxies/ProxiesContent.vue src/components/proxies/ProxiesByProvider.vue scripts/verify-scroll-smoothness.mjs`: pass after nested grid/provider spacing containment.
+- `npx vue-tsc --build --force`: pass after nested grid/provider spacing containment.
+- `npm run verify:scroll-smoothness`: pass after adding nested grid/provider spacing source checks.
+- `npm run build`: pass after nested grid/provider spacing containment.
+- `3x ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9272..9274 npm run verify:scroll-smoothness:provider-app-browser`: pass after nested grid/provider spacing containment. Provider-expanded `scrollHeight/clientHeight` was `604/432`, `maxScrollTop` was `172`, worst `p95` was `33.4ms`, worst frame was `33.5ms`, and total long samples were `0`.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9275 npm run verify:scroll-smoothness:app-browser`: pass after nested grid/provider spacing containment. Normal Proxies scroll reported `p95: 16.7ms`, `max: 16.7ms`, and ordinary expanded panel reported `scrollHeight/clientHeight: 384/384`.
+- `npx eslint src/components/proxies/ProxiesContent.vue scripts/verify-scroll-smoothness.mjs`: pass after removing flat non-virtual lazy-render calculation.
+- `npx vue-tsc --build --force`: pass after removing flat non-virtual lazy-render calculation.
+- `npm run verify:scroll-smoothness`: pass after adding a source check that rejects `useCalculateMaxProxies`, `activeIndex`, and `maxProxies` inside flat Proxies content.
+- `npm run build`: pass after removing flat non-virtual lazy-render calculation; the built `ProxyGroup` chunk decreased from roughly `28.91kB` to `28.77kB`.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9276 npm run verify:scroll-smoothness:app-browser`: pass after removing flat non-virtual lazy-render calculation. Main scroll reported `p95: 16.7ms`, `max: 16.7ms`, and ordinary expanded panel stayed non-scrollable at `384/384`.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9277 npm run verify:scroll-smoothness:provider-app-browser`: pass after removing flat non-virtual lazy-render calculation. Provider-expanded scroll reported `p95: 33.3ms`, `max: 33.3ms`, `scrollHeight/clientHeight: 604/432`, and `0` long samples.
+- `npx eslint src/composables/renderProxies.ts scripts/verify-scroll-smoothness.mjs`: pass after adding the disabled render-list early return.
+- `npx vue-tsc --build --force`: pass after adding the disabled render-list early return.
+- `npm run verify:scroll-smoothness`: pass after replacing the old disabled-sort source check with early-return assertions.
+- `npm run build`: pass after adding the disabled render-list early return.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9278 npm run verify:scroll-smoothness:app-browser`: pass after the collapsed render-list early return. Main scroll reported `p95: 16.7ms`, `max: 16.7ms`; ordinary expanded panel reported `p95: 16.7ms`, `max: 33.3ms`, `384/384`, and `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9279 npm run verify:scroll-smoothness:provider-app-browser`: pass after the collapsed render-list early return. Provider-expanded scroll reported `p95: 33.3ms`, `max: 33.3ms`, `604/432`, and `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9282 npm run verify:scroll-smoothness:app-browser`: pass after rerunning the route-surface check on a fresh CDP port. Main scroll reported `p95: 16.7ms`, `max: 16.7ms`; ordinary expanded panel stayed non-scrollable at `384/384` with `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9283 npm run verify:scroll-smoothness:provider-app-browser`: pass after the chain-stats source check. Provider-expanded scroll reported `p95: 33.3ms`, `max: 33.4ms`, `604/432`, and `0` long samples.
+- `node --check scripts\verify-scroll-smoothness.mjs`: pass after adding Connections route scroll sampling.
+- `npx eslint scripts\verify-scroll-smoothness.mjs`: pass after adding Connections route scroll sampling.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.connectionsRouteScrollSampled: true`.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9285 npm run verify:scroll-smoothness:app-browser`: pass after adding Connections route scroll sampling. Main Proxies scroll reported `p95: 16.7ms`, `max: 16.8ms`; Connections card virtual scroll over `240` mock rows reported `p95: 33.3ms`, `max: 33.4ms`, and `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9286 npm run verify:scroll-smoothness:provider-app-browser`: pass after adding Connections route scroll sampling. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.3ms`, `604/432`, and `0` long samples.
+- `npx eslint scripts\verify-scroll-smoothness.mjs src/components/logs/LogsCard.vue`: pass after adding Logs route scroll sampling and removing Logs card transition classes.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.logsRouteScrollSampled: true` and `sourceChecks.logsCardsAvoidTransitionClasses: true`.
+- `npx vue-tsc --build --force`: pass after adding Logs route scroll sampling.
+- `npm run build`: pass after removing Logs card transition classes; production output generated `LogsPage-l2v5r---.js`.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9290 npm run verify:scroll-smoothness:app-browser`: pass after rebuilding with Logs route scroll sampling. Main Proxies scroll reported `p95: 16.7ms`, `max: 16.7ms`; Connections virtual scroll reported `p95: 33.3ms`, `max: 33.4ms`; Logs virtual scroll over `360` mock rows reported `p95: 16.7ms`, `max: 16.8ms`, and `0` long samples.
+- `ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT=9291 npm run verify:scroll-smoothness:provider-app-browser`: pass after rebuilding with Logs route scroll sampling. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 49.9ms`, `604/432`, and `0` long samples.
+- `node --check scripts\verify-scroll-smoothness.mjs`: pass after adding automatic CDP port selection.
+- `npx eslint scripts/verify-scroll-smoothness.mjs src/components/connections/ConnectionCard.tsx src/components/connections/ConnectionCardList.vue`: pass after adding automatic CDP port selection and Connections card render tuning.
+- `npx vue-tsc --build --force`: pass after Connections card render tuning.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.scrollVerifierAutoSelectsCdpPort: true`, `connectionCardsSkipEmptyFilterHighlights: true`, `connectionCardsAvoidScrollAnimationHook: true`, and `connectionCardListUsesCompactOverscan: true`.
+- `npm run build`: pass after Connections card render tuning.
+- `npm run verify:scroll-smoothness:app-browser`: pass without manually setting a CDP port. Main Proxies scroll reported `p95: 16.7ms`, `max: 33.4ms`; Connections card virtual scroll rendered `25` rows / `628` elements, reported `p95: 49.9ms`, `max: 50.1ms`, and had no long tasks, layout changes, or new resources; Logs scroll reported `p95: 16.7ms`, `max: 16.8ms`.
+- `npm run verify:scroll-smoothness:provider-app-browser`: pass without manually setting a CDP port. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`, `604/432`, and `0` long samples.
+- `npx eslint scripts/verify-scroll-smoothness.mjs src/components/logs/LogsCard.vue`: pass after skipping empty-filter Logs card highlighters.
+- `npx vue-tsc --build --force`: pass after skipping empty-filter Logs card highlighters.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.logsCardsSkipEmptyFilterHighlights: true`.
+- `npm run build`: pass after skipping empty-filter Logs card highlighters; production output generated `LogsPage-CR4OPp-9.js`.
+- `npm run verify:scroll-smoothness:app-browser`: pass after rebuilding with the Logs card highlighter skip. Logs virtual scroll over `360` mock rows rendered `25` rows, reported `p95: 16.7ms`, `max: 16.7ms`, and had `0` long samples, long tasks, or new resources.
+- `npm run verify:scroll-smoothness:provider-app-browser`: pass after rebuilding with the Logs card highlighter skip. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`, `604/432`, and `0` long samples.
+- `npx eslint scripts/verify-scroll-smoothness.mjs src/views/LogsPage.vue src/components/logs/LogsCard.vue`: pass after fixing Logs virtual-scroll row height.
+- `npx vue-tsc --build --force`: pass after fixing Logs virtual-scroll row height.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.logsUseFixedRowHeight: true`.
+- `npm run build`: pass after fixing Logs virtual-scroll row height; production output generated `LogsPage-CDTG76Bq.js`.
+- `npm run verify:scroll-smoothness:app-browser`: pass after rebuilding with fixed Logs rows. Logs virtual scroll over `360` mock rows rendered `20` rows, reported `p95: 16.8ms`, `max: 16.8ms`, `0` long samples, and kept `scrollHeightBefore/After` stable at `23222/23222`.
+- `npm run verify:scroll-smoothness:provider-app-browser`: pass after rebuilding with fixed Logs rows. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`, `scrollHeightBefore/After: 604/604`, and `0` long samples.
+- `npx eslint scripts/verify-scroll-smoothness.mjs`: pass after removing Connections row transitions.
+- `npm run verify:scroll-smoothness`: pass with `sourceChecks.connectionCardsAvoidRowTransitions: true`.
+- `npx vue-tsc --build --force`: pass after removing Connections row transitions.
+- `npm run build`: pass after removing Connections row transitions; production output generated `index-B9M_dXxk.css`.
+- `npm run verify:scroll-smoothness:app-browser`: pass after removing Connections row transitions and restoring the tuned `16` overscan. Main Proxies scroll reported `p95: 16.8ms`, `max: 33.4ms`, and `0` long samples; Connections route virtual scroll reported `p95: 50ms`, `max: 66.6ms`, `3` uncoupled long samples, stable `scrollHeightBefore/After: 21342/21342`, and no long tasks, layout changes, or new resources.
+- `npm run verify:scroll-smoothness:provider-app-browser`: pass after removing Connections row transitions. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`, `scrollHeightBefore/After: 604/604`, and `0` long samples.
+- Mobile dock single-layer source/build/browser check: pass via `singleLayerDockPill: true`.
+- Mobile dock fixed viewport source/build/browser check: pass via `fixedViewportDockLayer: true` and configured-app runtime `dockFixedViewportLayer: true`.
+- Mobile dock body mount source/runtime check: pass via `HomePage.vue` `<Teleport to="body">` assertions and configured-app runtime `shellParentTag: "BODY"`.
+- Mobile dock no-transform source check: pass by asserting the dock is not wrapped by `name="v-slide-up"`.
+- Mobile dock fixed-height source/build check: pass by asserting `height: 52px !important`, `max-height: 52px !important`, and shell/dock pseudo-element suppression.
+- Mobile dock runtime shell-layer check: pass by asserting `shellBackgroundColor: "rgba(0, 0, 0, 0)"`, `shellBoxShadow: "none"`, `shellFilter: "none"`, and `content: "none"` / `display: "none"` for shell and dock pseudo-elements.
+- Mobile dock all-theme runtime matrix: pass by switching all `18` built-in themes in the fixture browser and checking dock geometry, shell transparency, pseudo-element suppression, no outer shadow, and light/dark background classification.
+- Mobile dock all-theme screenshot matrix: pass with `18` PNGs written under `output\verify-mobile-dock\theme-matrix`; total captured size `434644` bytes.
+- Dist package structure check: pass with `354` files, `8254365` bytes, required entry/service-worker/manifest/PWA icon/built asset files present, no nested `dist/` directory, and no unsafe ZIP paths.
+- Custom proxy folder browser workflow dock geometry/shadow check: pass through `folderWorkflow.dock.shellPosition: "fixed"` and single-inset `boxShadow`.
+- Connection card lazy-field source check: pass via `connectionCardsRenderVisibleFieldsOnly: true`.
+- Connection card single-pass line source check: pass via `connectionCardsAvoidFilteredLineArrays: true`.
+- Connection table cached sort/class source check: pass via `connectionTableCachesSortAndCellClasses: true`.
+- Connection table chain VNode source check: pass via `connectionTableBuildsChainCellsWithoutUnshift: true`.
+- Connection table accessor reuse source check: pass via `connectionTableReusesAccessorValuesForCells: true`.
+- Connection table single-pass visibility source check: pass via `connectionTableBuildsColumnVisibilitySinglePass: true`.
+- Connection table cached display accessor source check: pass via `connectionTableReusesCachedDisplayValues: true`.
+- Connection store derived-cache dedupe source check: pass by asserting no redundant `networkTypeText` derived field and exactly one `getNetworkTypeFromConnection(connection)` / `getInboundUserFromConnection(connection)` call.
+- Nested-scroll proxy card transition source check: pass by asserting the nested surface uses `transition-[background-color,transform] duration-150 ease-out` while the default surface keeps `transition-[background-color,transform,box-shadow,border-color]`.
+- `10x npm run verify:scroll-smoothness:app-browser` after Connections card/table optimizations: pass.
+- `5x npm run verify:scroll-smoothness:provider-app-browser` after cached display accessor verification was restored: pass.
+- `3x npm run verify:scroll-smoothness:provider-app-browser` after cached card/table stable display values were expanded: pass.
 
 ## Performance Notes
 
-- Normal Proxies page scroll stayed within the verifier budget. The latest app-browser run saw `p95: 16.7ms`, `max: 50.1ms`; the single tail sample happened after reaching the end (`remainingAfter: 0`) and was uncoupled from resources, long tasks, or layout changes.
-- Mobile expanded nested scroll passed and kept dock hit targets hidden. The latest app-browser run saw `p95: 33.4ms`, `max: 33.4ms`, with no long samples, new resources, long tasks, or layout changes.
-- Provider-grouped expanded nested scroll passed. The latest provider app run saw `p95: 33.4ms`, `max: 33.4ms`, with no long samples, new resources, long tasks, or layout changes.
+- Normal Proxies page scroll stayed within the verifier budget. The latest app-browser run after the fixed-layer dock verification saw `p95: 16.7ms`, `max: 33.3ms`, with no long samples, new resources, long tasks, or layout changes.
+- Mobile expanded nested scroll passed and kept dock hit targets hidden. The latest app-browser run after the fixed-layer dock verification saw `p95: 33.3ms`, `max: 33.3ms`, with no long samples, new resources, long tasks, or layout changes.
+- Provider-grouped expanded nested scroll passed. The latest provider app run after fixed-layer dock verification saw `p95: 50ms`, `max: 50ms`, with `2` uncoupled RAF tail samples; new resources, long tasks, and layout changes stayed at `0`.
 - Expanded panel resize checks passed for both normal and provider-grouped mobile panels. In compact height, nested scroll height changed from `432px` to `360px`, remained scrollable, stayed above the dock, and restored to `432px`.
 - Expanded dock accessibility checks passed for normal and provider-grouped expanded panels. Dock DOM reported `ariaHidden: true`, `inert: true`, no dock entries appeared during 12 Tab steps, and `navigationNodes` was empty in the accessibility tree.
 - Expanded dock restore checks passed for normal and provider-grouped expanded panels. After closing, dock DOM reported `ariaHidden: ""`, `inert: false`, `pointerEvents: auto`, opacity above `0.98`, focus returned to `Proxies`, and `Main navigation` reappeared in the accessibility tree.
+- Mobile dock fixture screenshots passed after removing the outer shadow. Light/dark runtime `boxShadow` now reports only the inset `0.5px` stroke, `shellPosition` reports `fixed`, dock size stayed `320 x 52`, and touch targets stayed `60 x 44`.
+- Configured-app dock runtime after the Teleport fix reports `shellParentTag: "BODY"`, `shellPosition: fixed`, `safeAreaGap: 14`, `dock: 320 x 52`, and only the inset dock shadow, preventing route-page transforms or scroll-container clipping from affecting the floating capsule.
+- Latest bottom-dock recheck after removing the slide-up wrapper passed in fixture browser: light and dark docks both reported `shellPosition: fixed`, `height: 52`, `width: 320`, `safeAreaGap: 10`, and only the inset `0.5px` stroke.
+- Latest configured-app recheck after the single-layer dock tightening passed: runtime dock reported `shellParentTag: "BODY"`, `shellPosition: fixed`, `height: 52`, `width: 320`, `safeAreaGap: 14`, and only the inset `0.5px` stroke.
+- Latest configured-app scroll pass after the bottom dock fix reported normal Proxies scroll `p95: 33.3ms`, `max: 33.4ms`, `0` long samples, and expanded nested scroll `p95: 33.3ms`, `max: 33.4ms`, `0` long samples.
+- Latest runtime shell-layer recheck passed in fixture and configured-app browsers. Light/dark fixture docks and normal/custom-folder app docks all reported transparent shell background, no shell shadow/filter, and non-rendering shell/dock pseudo-elements.
+- Latest app-browser scroll pass after the runtime shell-layer gate reported normal Proxies scroll `p95: 16.7ms`, `max: 16.7ms`, `0` long samples; expanded ordinary nested scroll `p95: 33.4ms`, `max: 33.4ms`, `0` long samples.
+- Latest provider app-browser pass after the runtime shell-layer gate reported provider expanded nested scroll `p95: 33.4ms`, `max: 33.4ms`, `0` long samples, with restored dock shell still transparent and pseudo-elements non-rendering.
+- Latest all-theme dock fixture matrix passed after the production rebuild. The matrix covered `18` themes: `12` dark-side dock themes and `6` light-side dock themes (`light`, `light-monet`, `lofi`, `wireframe`, `nord`, `cupcake`), preventing light/white-side themes from regressing to the dark dock plate.
+- Latest all-theme dock screenshot matrix passed after the production rebuild. The fixture browser captured `18` dock screenshots to `output\verify-mobile-dock\theme-matrix`, with light and dark samples preserved alongside the full theme matrix for visual regression review.
+- Latest app-browser scroll recheck after the all-theme matrix gate reported normal Proxies scroll `p95: 16.7ms`, `max: 16.7ms`, `0` long samples; expanded ordinary nested scroll `p95: 33.3ms`, `max: 33.3ms`, `0` long samples.
+- Custom proxy folder browser workflow passed after dock verification was tightened. Creating `Codex QA`, selecting `Group 01 Node 01`, activating the custom folder, and filtering to `Group 01` preserved `dockPointerEvents: auto`, `dockVisible: true`, `dockButtonCount: 5`, `shellPosition: fixed`, `shellParentTag: "BODY"`, `safeAreaGap: 14`, and the single-inset dock shadow.
 - Provider-grouped expanded stability sampling passed across `10` consecutive verifier runs. The worst `p95` was `33.4ms`, worst single frame was `50.1ms`, and the `4` total long samples were uncoupled from layout changes, long tasks, and new resources; dock restore checks stayed green in every run.
 - WebSocket realtime routes no longer appear as repeated ordinary HTTP request noise in the latest app-browser `servedRequests`.
+- Connections source checks keep `connectionsCacheDerivedRowData: true`, confirming filter paths still use cached row data.
+- Connection card source checks keep `connectionCardsRenderVisibleFieldsOnly: true`, confirming card rows do not rebuild hidden field components during virtual scrolling.
+- Connection card source checks keep `connectionCardsAvoidFilteredLineArrays: true`, confirming card line rendering skips hidden close actions without a separate filtered array.
+- Connection table source checks keep `connectionTableCachesSortAndCellClasses: true`, confirming connect-time sort no longer imports `dayjs` and table cells no longer import `tailwind-merge` for render-time class generation.
+- Connection table source checks keep `connectionTableBuildsChainCellsWithoutUnshift: true`, confirming proxy-chain cells avoid repeated array front insertion and false class tokens.
+- Connection table source checks keep `connectionTableReusesAccessorValuesForCells: true`, confirming highlighted cells reuse row accessor values instead of recomputing display values.
+- Connection table source checks keep `connectionTableBuildsColumnVisibilitySinglePass: true`, confirming column visibility avoids inline `Object.fromEntries` filter/map reconstruction.
+- Connection table/card source checks keep `connectionTableReusesCachedDisplayValues: true`, confirming display accessors reuse cached values for stable fields where behavior is equivalent.
+- Connection derived-cache source checks confirm the display-value cache reuses local network type and inbound user strings and avoids duplicate helper calls per row.
+- App-browser stability sampling after the Connections card/table optimizations passed across `10` consecutive successful samples. Normal page scroll worst `p95` was `33.2ms`, worst frame was `33.4ms`, and had `0` long samples; expanded mobile scroll worst `p95` was `49.9ms`, worst frame was `50ms`, and had `4` total long samples. Layout changes, long tasks, and new resources stayed at `0`.
+- Provider app-browser sampling after the cached display accessor verification fix passed across `5` consecutive successful samples. Worst `p95` was `33.4ms`, worst frame was `33.4ms`, and dock hidden, dock restore, and expanded dock accessibility checks stayed true in every run.
+- Provider app-browser sampling after stable display cache expansion passed across `3` consecutive successful samples. Worst `p95` was `35.8ms`, worst frame was `50ms`, and dock hidden, dock restore, and cached display source checks stayed true in every run.
+- Provider-grouped expanded nested scroll after the nested-card transition reduction passed with `p95: 16.7ms`, `max: 16.7ms`, and `0` long samples, long tasks, layout changes, or new resources.
+- Normal app-browser recheck after the nested-card transition reduction passed. The second main-page sample reported `p95: 16.7ms`, `max: 16.7ms`, and `0` long samples; the expanded ordinary nested-scroll pass had one terminal `50ms` RAF sample at `remainingAfter: 0` with no long tasks, layout changes, or new resources.
+- Latest app-browser pass after removing scroll/route animations reported main Proxies page scroll `p95: 16.7ms`, `max: 33.3ms`, and `0` long samples, long tasks, layout changes, or new resources.
+- Latest provider-grouped app-browser pass after removing scroll/route animations passed with provider-expanded nested scroll `p95: 50ms`, `max: 50ms`, and no long tasks, layout changes, or new resources.
+- Latest app-browser pass after removing the obsolete setting and per-card `useI18n()` reported main Proxies page scroll `p95: 16.7ms`, `max: 50ms`, and `1` uncoupled long sample with no long tasks, layout changes, or new resources.
+- Latest provider-grouped pass after removing the obsolete setting and per-card `useI18n()` reported provider-expanded nested scroll `p95: 50ms`, `max: 50.1ms`, with long samples uncoupled from long tasks, layout changes, or new resources.
+- Latest app-browser pass after removing mobile expanded-panel transitions reported main Proxies page scroll `p95: 16.8ms`, `max: 33.2ms`, and `0` long samples, long tasks, layout changes, or new resources; ordinary expanded nested scroll still showed uncoupled tail RAF samples only.
+- Latest provider-grouped pass after removing mobile expanded-panel transitions reported provider-expanded nested scroll `p95: 50ms`, `max: 50.1ms`; long samples remained uncoupled from long tasks, layout changes, and new resources, so remaining provider stutter should be investigated separately from animation removal.
+- Latest provider-grouped pass after skipping small-list lazy listeners and removing nested card transitions reported provider-expanded nested scroll `p95: 50ms`, `max: 50ms`, with `3` uncoupled long samples and no long tasks, layout changes, or new resources.
+- Latest normal app-browser pass after the same tuning reported main Proxies page scroll `p95: 33.3ms`, `max: 33.3ms`, `0` long samples, long tasks, layout changes, or new resources; ordinary expanded nested scroll had one terminal `50ms` sample at `remainingAfter: 0`.
+- Latest provider-grouped pass after adding scroll diagnostics and provider section containment reported provider-expanded nested scroll `p95: 33.4ms`, `max: 33.5ms`, `0` long samples, `8` scroll events, `43px` average step distance, and `28.9ms` max scroll-event interval.
+- Provider-grouped stability sampling after provider section containment passed across `3` consecutive runs. Worst `p95` was `33.4ms`, worst `max` was `50ms`, only `1` long sample appeared, and long tasks, layout changes, and new resources stayed at `0`.
+- Latest normal app-browser regression after provider containment reported main Proxies page scroll `p95: 16.7ms`, `max: 16.7ms`, `0` long samples, `8` scroll events, and `17.4ms` max scroll-event interval.
+- Latest normal app-browser stability sampling after compact nested cards passed across `3` consecutive runs. The ordinary expanded panel fit without internal scrolling at `scrollHeight/clientHeight: 404/404`, `maxScrollTop: 0`; worst expanded `p95` and `max` were both `16.8ms`, with `0` long samples.
+- Latest provider-grouped stability sampling after nested grid/provider spacing containment passed across `3` consecutive runs. Provider-expanded scroll distance dropped to `maxScrollTop: 172`, worst `p95` was `33.4ms`, worst frame was `33.5ms`, and there were `0` long samples.
+- Latest normal app-browser pass after nested grid containment kept the ordinary expanded panel non-scrollable at `scrollHeight/clientHeight: 384/384`, with main-page scroll at `p95: 16.7ms`, `max: 16.7ms`, and `0` long samples.
+- Latest app/provider browser passes after removing flat non-virtual lazy-render calculation kept the same scroll geometry: ordinary expanded `384/384`, provider-expanded `604/432`, and both paths had `0` long samples.
+- Latest app/provider browser passes after the collapsed render-list early return kept the same scroll geometry and removed the collapsed-state full latency/filter pass. Main scroll stayed at `p95: 16.7ms`, provider-expanded stayed at `p95: 33.3ms`, and all sampled paths had `0` long samples.
+- Latest app/provider browser reruns after the Connections chain-stats allocation removal stayed green. Main Proxies scroll reported `p95: 16.7ms`, `max: 16.7ms`; provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`; both had `0` long samples.
+- Latest app-browser run now covers Connections route scrolling with real virtual-list frames. The Connections card virtual scroller rendered `33` visible rows from `240` mock active connections, scrolled `20498px`, reported `p95: 33.3ms`, `max: 33.4ms`, and had `0` long samples, long tasks, layout changes, or new resources.
+- Latest app-browser run now covers Logs route scrolling with real virtual-list frames. The Logs virtual scroller rendered `25` visible rows from `360` mock logs, scrolled `26652px`, reported `p95: 16.7ms`, `max: 16.8ms`, and had `0` long samples, long tasks, or new resources. Dynamic row-height measurement still updates total scroll height during the sample, but it is not coupled to long frames.
+- Latest app-browser run after Connections card render tuning still passes without explicit CDP env vars. Connections route sampling now renders `25` rows / `628` elements instead of `33` rows / `828` elements, with no long tasks, layout changes, or new resources during scroll sampling.
+- Latest provider app-browser run after CDP auto-port selection and Connections tuning passed without explicit CDP env vars. Provider-expanded nested scroll reported `p95: 33.3ms`, `max: 33.4ms`, `0` long samples, and no long tasks, layout changes, or new resources.
+- Latest app-browser run after fixed Logs rows kept Logs route sampling at `p95: 16.8ms`, `max: 16.8ms`, with `0` long samples, long tasks, layout changes, or new resources. Total scroll height stayed stable during sampling at `23222/23222`, removing the previous dynamic row-height correction path.
+- Latest app-browser run after removing Connections row transitions kept Connections route sampling within the verifier budget at `p95: 50ms`, `max: 66.6ms`, with `3` uncoupled RAF samples and no long tasks, layout changes, or new resources. Main Proxies scroll stayed at `p95: 16.8ms`, `max: 33.4ms`.
+- Latest provider app-browser run after removing Connections row transitions stayed green with provider-expanded nested scroll at `p95: 33.3ms`, `max: 33.4ms`, stable `604/604` scroll height, and no long samples, long tasks, layout changes, or new resources.
+- Connections card overscan `8` was tested and rejected. It reduced rendered rows from `25` to `17` and DOM elements from `628` to `428`, but introduced a `73ms` long task and worsened the Connections route sample to `p95: 50ms`, `max: 66.7ms`; the list was restored to the previous tuned `16` overscan.
 - Lazy latency lookup keeps `proxiesCount` accurate while avoiding unconditional latency reads before default filter/sort paths need them.
 - Virtual grid row preparation remains limited to visible virtual rows and keeps active-row lookup on the cached node-index map.
 - Mobile collapsed cards avoid full render-list sorting/filter output during page scrolling; expanded normal and provider-grouped panels still render the expected `12` nodes in the browser checks.

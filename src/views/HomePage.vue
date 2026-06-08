@@ -25,13 +25,7 @@
           <div
             v-if="isMiddleScreen"
             :key="route.fullPath"
-            ref="routePageRef"
             class="route-page"
-            :class="[
-              getRouteEnterClass(route.meta.transition as string),
-              isRouteDragging && 'route-page-dragging',
-              !shouldAnimateRouteTransition && 'route-page-transition-disabled',
-            ]"
           >
             <Component :is="Component" />
           </div>
@@ -41,45 +35,38 @@
           />
         </div>
 
-        <template v-if="isMiddleScreen">
-          <Transition
-            name="v-slide-up"
-            appear
-          >
-            <nav
-              class="dock-shell transition-opacity duration-200 ease-out"
-              :class="dockHidden && 'pointer-events-none opacity-0'"
-              :style="dockStyle"
-              :aria-label="$t('mainNavigation')"
-              :aria-hidden="dockHidden ? 'true' : undefined"
-              :inert="dockHidden ? true : undefined"
-              ref="dockRef"
+        <nav
+          v-if="isMiddleScreen"
+          class="dock-shell transition-opacity duration-200 ease-out"
+          :class="dockHidden && 'pointer-events-none opacity-0'"
+          :aria-label="$t('mainNavigation')"
+          :aria-hidden="dockHidden ? 'true' : undefined"
+          :inert="dockHidden ? true : undefined"
+          ref="dockRef"
+        >
+          <div class="dock dock-xs h-[52px]">
+            <button
+              v-for="r in renderRoutes"
+              :key="r"
+              type="button"
+              @click="navigateDockRoute(r)"
+              class="dock-button h-[52px] flex-col items-center justify-center pt-1.5"
+              :class="r === route.name && 'dock-active'"
+              :aria-label="$t(r)"
+              :aria-current="r === route.name ? 'page' : undefined"
             >
-              <div class="dock dock-xs h-[52px]">
-                <button
-                  v-for="r in renderRoutes"
-                  :key="r"
-                  type="button"
-                  @click="navigateDockRoute(r)"
-                  class="dock-button h-[52px] flex-col items-center justify-center pt-1.5"
-                  :class="r === route.name && 'dock-active'"
-                  :aria-label="$t(r)"
-                  :aria-current="r === route.name ? 'page' : undefined"
-                >
-                  <component
-                    :is="ROUTE_ICON_MAP[r]"
-                    class="dock-icon h-5 w-5 flex-shrink-0"
-                    aria-hidden="true"
-                    focusable="false"
-                  />
-                  <span class="dock-label">
-                    {{ $t(r) }}
-                  </span>
-                </button>
-              </div>
-            </nav>
-          </Transition>
-        </template>
+              <component
+                :is="ROUTE_ICON_MAP[r]"
+                class="dock-icon h-5 w-5 flex-shrink-0"
+                aria-hidden="true"
+                focusable="false"
+              />
+              <span class="dock-label">
+                {{ $t(r) }}
+              </span>
+            </button>
+          </div>
+        </nav>
       </div>
     </RouterView>
 
@@ -128,7 +115,7 @@ import { initLogs, pauseLogs, resumeLogs } from '@/store/logs'
 import { initSatistic, pauseSatistic, resumeSatistic } from '@/store/overview'
 import { fetchProxies, proxiesTabShow } from '@/store/proxies'
 import { fetchRules, rulesTabShow } from '@/store/rules'
-import { isSidebarCollapsed, lowPowerMode, scrollAnimationEffect } from '@/store/settings'
+import { isSidebarCollapsed, lowPowerMode } from '@/store/settings'
 import { activeBackend, activeUuid, backendList } from '@/store/setup'
 import type { Backend } from '@/types'
 import { useDocumentVisibility, useElementBounding } from '@vueuse/core'
@@ -136,8 +123,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 
 const router = useRouter()
-const routePageRef = ref<HTMLElement>()
-const { isDragging: isRouteDragging, swiperRef } = useSwipeRouter(routePageRef)
+const { swiperRef } = useSwipeRouter()
 const sidebarLayoutCollapsed = ref(isSidebarCollapsed.value)
 
 const navigateDockRoute = (name: ROUTE_NAME) => {
@@ -145,29 +131,14 @@ const navigateDockRoute = (name: ROUTE_NAME) => {
   void router.push({ name, replace: true })
 }
 
-const getRouteEnterClass = (transition?: string) => {
-  if (transition === 'slide-right') return 'route-enter-right'
-  if (transition === 'slide-left') return 'route-enter-left'
-  return 'route-enter-fade'
-}
-
 const dockRef = ref<HTMLElement>()
 const { top: dockRefTop } = useElementBounding(dockRef)
 const dockHidden = computed(() => disableProxiesPageScroll.value)
-const dockStyle = computed(() => {
-  return {
-    bottom: 'calc(14px + env(safe-area-inset-bottom))',
-  }
-})
 
 const documentVisible = useDocumentVisibility()
 const shouldRunRealtimeStreams = computed(() => {
   return documentVisible.value === 'visible' && !lowPowerMode.value
 })
-const shouldAnimateRouteTransition = computed(() => {
-  return !lowPowerMode.value && scrollAnimationEffect.value
-})
-
 const pauseRealtimeStreams = () => {
   pauseConnections()
   pauseLogs()

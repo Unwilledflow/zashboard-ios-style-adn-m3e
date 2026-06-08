@@ -20,19 +20,31 @@ div {
   @apply text-info;
 }
 
-/* iOS 26 / Material 3 floating pill dock — full-width minus 16px, liquid glass.
+/* iOS 26 / Material 3 floating pill dock — compact app-layer liquid glass.
    Rules are intentionally flat (no nesting) because Tailwind v4 CSS nesting
    would otherwise turn them into `.dock .dock-*` descendant selectors that
    silently fail to match the single dock element on the page. */
 .dock-shell {
-  position: absolute;
+  position: fixed;
   right: auto;
   left: 50%;
-  bottom: calc(10px + env(safe-area-inset-bottom));
+  bottom: calc(18px + env(safe-area-inset-bottom));
   z-index: 30;
   width: min(320px, calc(100vw - 48px));
   translate: -50% 0;
   isolation: isolate;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.dock-shell::before,
+.dock-shell::after {
+  content: none !important;
+  display: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
 }
 
 .dock-safe-area {
@@ -47,10 +59,14 @@ div {
   border-radius: 24px;
   inset: auto !important;
   width: 100% !important;
-  --dock-shadow-color: color-mix(in srgb, var(--color-primary) 72%, var(--color-base-content));
   --dock-border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-base-content));
+  height: 52px !important;
+  max-height: 52px !important;
   min-height: 52px !important;
   padding: 6px 10px;
+  overflow: hidden;
+  contain: layout paint style;
+  background-clip: padding-box;
   background: color-mix(
     in srgb,
     var(--color-base-100) var(--dock-bg-tint, 72%),
@@ -61,8 +77,9 @@ div {
   backdrop-filter: blur(var(--glass-blur-radius, var(--blur-radius, 16px)))
     saturate(var(--glass-saturation, 140%)) !important;
   box-shadow:
-    0 8px 24px color-mix(in srgb, var(--dock-shadow-color) 42%, transparent),
-    inset 0 0 0 0.5px color-mix(in srgb, var(--dock-border-color) 14%, transparent);
+    0 10px 28px rgb(15 23 42 / 0.14),
+    0 2px 6px rgb(15 23 42 / 0.08),
+    inset 0 0 0 0.5px color-mix(in srgb, var(--dock-border-color) 14%, transparent) !important;
 }
 
 /* Dark themes: swap the bar to a dark frosted plate so it lifts off dim
@@ -80,11 +97,23 @@ div {
 [data-theme='abyss'] .dock,
 [data-theme='sunset'] .dock {
   background: rgb(28 28 30 / var(--dock-bg-alpha, 0.32)) !important;
-  --dock-shadow-color: color-mix(in srgb, var(--color-primary) 78%, #000);
   --dock-border-color: color-mix(in srgb, var(--color-primary) 36%, var(--color-base-content));
   box-shadow:
-    0 8px 30px color-mix(in srgb, var(--dock-shadow-color) 46%, transparent),
-    inset 0 0 0 0.5px color-mix(in srgb, var(--dock-border-color) 12%, transparent);
+    0 10px 28px rgb(0 0 0 / 0.24),
+    0 2px 6px rgb(0 0 0 / 0.16),
+    inset 0 0 0 0.5px color-mix(in srgb, var(--dock-border-color) 12%, transparent) !important;
+}
+
+.custom-background .dock {
+  background: color-mix(
+    in srgb,
+    var(--color-base-100) var(--dock-custom-bg-tint, 56%),
+    transparent
+  ) !important;
+  box-shadow:
+    0 12px 34px rgb(15 23 42 / 0.18),
+    0 3px 10px rgb(15 23 42 / 0.1),
+    inset 0 0 0 0.5px color-mix(in srgb, var(--dock-border-color) 18%, transparent) !important;
 }
 
 /* Active pill needs more saturation against the dark plate so the selected
@@ -110,9 +139,14 @@ div {
    selectors with both `content: none` and `display: none` for belt-and-braces. */
 .dock-button::after,
 .dock-active::after,
-.dock > *::after {
+.dock > *::after,
+.dock::before,
+.dock::after {
   content: none !important;
   display: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
 }
 
 .dock-button {
@@ -419,6 +453,113 @@ div {
   transform: scale(0.95);
 }
 
+.proxy-folder-pillbar {
+  contain: layout style paint;
+}
+
+.proxy-folder-pillbar__scroller {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  border: 0.5px solid color-mix(in srgb, var(--color-base-content) 8%, transparent);
+  border-radius: 999px;
+  padding: 5px;
+  background: color-mix(in srgb, var(--color-base-100) var(--glass-tint, 78%), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur-radius, var(--blur-radius, 16px)))
+    saturate(var(--glass-saturation, 160%));
+  backdrop-filter: blur(var(--glass-blur-radius, var(--blur-radius, 16px)))
+    saturate(var(--glass-saturation, 160%));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent);
+  -webkit-overflow-scrolling: touch;
+}
+
+.proxy-folder-pill,
+.proxy-folder-manage {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-base-content) 68%, transparent);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  scroll-snap-align: start;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 0.18s var(--ios-ease),
+    color 0.18s var(--ios-ease),
+    transform 0.16s var(--ios-spring);
+}
+
+.proxy-folder-pill {
+  padding: 0 12px;
+}
+
+.proxy-folder-manage {
+  width: 36px;
+  padding: 0;
+}
+
+.proxy-folder-pill:active,
+.proxy-folder-manage:active {
+  transform: scale(0.96);
+}
+
+.proxy-folder-pill.is-active {
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  color: var(--color-primary);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.proxy-folder-pill__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.proxy-folder-pill__label {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-folder-pill__count {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+[data-theme='dark'] .proxy-folder-pillbar__scroller,
+[data-theme='dark-monet'] .proxy-folder-pillbar__scroller,
+[data-theme='dark-daisyui5'] .proxy-folder-pillbar__scroller,
+[data-theme='black'] .proxy-folder-pillbar__scroller,
+[data-theme='business'] .proxy-folder-pillbar__scroller,
+[data-theme='night'] .proxy-folder-pillbar__scroller,
+[data-theme='dim'] .proxy-folder-pillbar__scroller,
+[data-theme='dracula'] .proxy-folder-pillbar__scroller,
+[data-theme='forest'] .proxy-folder-pillbar__scroller,
+[data-theme='halloween'] .proxy-folder-pillbar__scroller,
+[data-theme='abyss'] .proxy-folder-pillbar__scroller,
+[data-theme='sunset'] .proxy-folder-pillbar__scroller {
+  background: rgb(28 28 30 / 0.34);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-base-content) 8%, transparent);
+}
+
 .bg-primary .latency-tag {
   background-color: color-mix(in srgb, var(--color-base-100) 92%, transparent);
 }
@@ -436,12 +577,6 @@ div {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
-}
-
-.connection-row {
-  transition:
-    background-color 0.18s var(--ios-ease, cubic-bezier(0.4, 0, 0.2, 1)),
-    transform 0.18s var(--ios-spring, cubic-bezier(0.32, 0.72, 0, 1));
 }
 
 .connection-row:active {

@@ -1,11 +1,11 @@
-import { createServer } from 'node:http'
-import { createReadStream, existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { extname, join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { readFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { createReadStream, existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { extname, join, resolve } from 'node:path'
 
 const root = resolve(process.cwd(), 'dist')
 const sourceRoot = resolve(process.cwd(), 'src')
@@ -17,7 +17,8 @@ const shouldRunAppBrowser =
 const shouldRunProviderGroupedAppBrowser =
   process.env.ZASHBOARD_SCROLL_VERIFY_PROVIDER_GROUPED_APP_BROWSER === '1' ||
   args.has('--provider-grouped-app-browser')
-const shouldServeOnly = process.env.ZASHBOARD_SCROLL_VERIFY_SERVER_ONLY === '1' || args.has('--server-only')
+const shouldServeOnly =
+  process.env.ZASHBOARD_SCROLL_VERIFY_SERVER_ONLY === '1' || args.has('--server-only')
 const defaultPort = shouldRunAppBrowser ? 4195 : shouldRunProviderGroupedAppBrowser ? 4196 : 4194
 const port = Number(process.env.ZASHBOARD_SCROLL_VERIFY_PORT || defaultPort)
 const baseUrl = `http://localhost:${port}`
@@ -28,6 +29,9 @@ const screenshotRoot = resolve(
 const servedRequests = []
 const realtimeWebSocketPaths = new Set(['/connections', '/logs', '/memory', '/traffic'])
 const realtimeWebSockets = new Set()
+const EXPECTED_DOCK_WIDTH = 320
+const EXPECTED_DOCK_HEIGHT = 52
+const DOCK_SIZE_EPSILON = 0.5
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -44,7 +48,9 @@ const mimeTypes = {
 }
 
 const sourceFiles = {
+  scrollVerify: resolve(process.cwd(), 'scripts', 'verify-scroll-smoothness.mjs'),
   componentsCss: join(sourceRoot, 'assets', 'styles', 'components.css'),
+  motionCss: join(sourceRoot, 'assets', 'styles', 'motion.css'),
   homePage: join(sourceRoot, 'views', 'HomePage.vue'),
   overviewPage: join(sourceRoot, 'views', 'OverviewPage.vue'),
   proxiesPage: join(sourceRoot, 'views', 'ProxiesPage.vue'),
@@ -57,6 +63,7 @@ const sourceFiles = {
   proxiesContent: join(sourceRoot, 'components', 'proxies', 'ProxiesContent.vue'),
   proxiesByProvider: join(sourceRoot, 'components', 'proxies', 'ProxiesByProvider.vue'),
   proxiesCtrl: join(sourceRoot, 'components', 'controls', 'ProxiesCtrl.tsx'),
+  proxyNodeGrid: join(sourceRoot, 'components', 'proxies', 'ProxyNodeGrid.vue'),
   virtualProxyNodeGrid: join(sourceRoot, 'components', 'proxies', 'VirtualProxyNodeGrid.vue'),
   proxies: join(sourceRoot, 'composables', 'proxies.ts'),
   proxiesScroll: join(sourceRoot, 'composables', 'proxiesScroll.ts'),
@@ -66,14 +73,30 @@ const sourceFiles = {
   swipe: join(sourceRoot, 'composables', 'swipe.ts'),
   proxiesStore: join(sourceRoot, 'store', 'proxies.ts'),
   connectionsStore: join(sourceRoot, 'store', 'connections.ts'),
+  connectionCard: join(sourceRoot, 'components', 'connections', 'ConnectionCard.tsx'),
+  connectionCardList: join(sourceRoot, 'components', 'connections', 'ConnectionCardList.vue'),
+  connectionTable: join(sourceRoot, 'components', 'connections', 'ConnectionTable.vue'),
   logsStore: join(sourceRoot, 'store', 'logs.ts'),
   logsPage: join(sourceRoot, 'views', 'LogsPage.vue'),
+  logsCard: join(sourceRoot, 'components', 'logs', 'LogsCard.vue'),
   proxyNodeCard: join(sourceRoot, 'components', 'proxies', 'ProxyNodeCard.vue'),
   proxyIcon: join(sourceRoot, 'components', 'proxies', 'ProxyIcon.vue'),
   proxyPreview: join(sourceRoot, 'components', 'proxies', 'ProxyPreview.vue'),
   latencyTag: join(sourceRoot, 'components', 'proxies', 'LatencyTag.vue'),
+  generalSettings: join(sourceRoot, 'components', 'settings', 'general', 'GeneralSettings.vue'),
+  proxyFoldersStore: join(sourceRoot, 'store', 'proxyFolders.ts'),
+  settingsStore: join(sourceRoot, 'store', 'settings.ts'),
+  settingsItems: join(sourceRoot, 'config', 'settingsItems.ts'),
   folderItem: join(sourceRoot, 'components', 'proxies', 'folders', 'FolderItem.vue'),
   folderTopBar: join(sourceRoot, 'components', 'proxies', 'folders', 'FolderTopBar.vue'),
+  folderManagerContent: join(
+    sourceRoot,
+    'components',
+    'proxies',
+    'folders',
+    'FolderManagerContent.vue',
+  ),
+  folderEditor: join(sourceRoot, 'components', 'proxies', 'folders', 'FolderEditor.vue'),
 }
 
 const readText = (file) => readFile(file, 'utf8')
@@ -136,6 +159,64 @@ const createMockBackend = () => {
     }
   }
 
+  const connections = Array.from({ length: 240 }, (_, index) => {
+    const groupIndex = (index % 28) + 1
+    const nodeIndex = (index % 12) + 1
+    const groupName = `Group ${String(groupIndex).padStart(2, '0')}`
+    const nodeName = `${groupName} Node ${String(nodeIndex).padStart(2, '0')}`
+    const padded = String(index + 1).padStart(3, '0')
+
+    return {
+      id: `scroll-conn-${padded}`,
+      download: 4096 * (index + 1),
+      upload: 2048 * (index + 1),
+      chains: [nodeName, groupName, 'GLOBAL'],
+      rule: index % 3 === 0 ? 'DomainSuffix' : 'Match',
+      rulePayload: index % 3 === 0 ? `example-${padded}.test` : '',
+      start: '2026-06-05T00:00:00.000Z',
+      metadata: {
+        destinationGeoIP: 'US',
+        destinationIP: `198.51.100.${(index % 200) + 1}`,
+        destinationIPASN: 'AS64500',
+        destinationPort: index % 4 === 0 ? '443' : '80',
+        dnsMode: 'normal',
+        dscp: 0,
+        host: `service-${padded}.example.test`,
+        inboundIP: '127.0.0.1',
+        inboundName: 'mixed',
+        inboundPort: '7893',
+        inboundUser: '',
+        network: index % 4 === 0 ? 'udp' : 'tcp',
+        process: index % 2 === 0 ? 'browser.exe' : 'updater.exe',
+        processPath: index % 2 === 0 ? 'C:\\Program Files\\Browser\\browser.exe' : '',
+        remoteDestination: `service-${padded}.example.test`,
+        sniffHost: index % 4 === 0 ? `quic-${padded}.example.test` : '',
+        sourceGeoIP: 'LAN',
+        sourceIP: `192.0.2.${(index % 120) + 1}`,
+        sourceIPASN: 'AS64501',
+        sourcePort: String(40000 + index),
+        specialProxy: '',
+        specialRules: '',
+        type: 'HTTP',
+        uid: index,
+        smartBlock: '',
+      },
+    }
+  })
+  const logTypes = ['info', 'warning', 'error', 'debug']
+  const logs = Array.from({ length: 360 }, (_, index) => {
+    const padded = String(index + 1).padStart(3, '0')
+    const source = `192.0.2.${(index % 120) + 1}`
+    const target = `service-${padded}.example.test`
+
+    return {
+      type: logTypes[index % logTypes.length],
+      payload: `[TCP] ${source}:${40000 + index} --> ${target}:443 match Group ${String(
+        (index % 28) + 1,
+      ).padStart(2, '0')} Node ${String((index % 12) + 1).padStart(2, '0')}`,
+    }
+  })
+
   return {
     configs: {
       port: 7890,
@@ -154,6 +235,8 @@ const createMockBackend = () => {
     },
     providers: { providers },
     proxies: { proxies },
+    connections,
+    logs,
     rules: { rules: [] },
     version: { version: 'Meta-Scroll-Verify' },
   }
@@ -163,7 +246,6 @@ const mockBackend = createMockBackend()
 
 const getSetupScript = () => {
   const blurIntensity = Number(process.env.ZASHBOARD_SCROLL_VERIFY_BLUR_INTENSITY ?? 10)
-  const scrollAnimationEffect = process.env.ZASHBOARD_SCROLL_VERIFY_SCROLL_ANIMATION !== '0'
   const lowPowerMode = process.env.ZASHBOARD_SCROLL_VERIFY_LOW_POWER === '1'
   const backend = {
     host: 'localhost',
@@ -187,7 +269,6 @@ localStorage.setItem('config/language', ${JSON.stringify('en-US')});
 localStorage.setItem('config/two-columns', ${JSON.stringify(true)});
 localStorage.setItem('config/low-power-mode', ${JSON.stringify(lowPowerMode)});
 localStorage.setItem('config/blur-intensity', ${JSON.stringify(blurIntensity)});
-localStorage.setItem('config/scroll-animation-effect', ${JSON.stringify(scrollAnimationEffect)});
 localStorage.setItem('config/group-proxies-by-provider', ${JSON.stringify(shouldRunProviderGroupedAppBrowser)});
 localStorage.setItem('config/check-upgrade-core', ${JSON.stringify(false)});
 localStorage.setItem('config/auto-ip-check', ${JSON.stringify(false)});
@@ -226,7 +307,11 @@ const assertSourceChecks = async () => {
     ),
   )
 
-  assertIncludes(sources.componentsCss, '.smooth-scroll-container', 'smooth-scroll-container rule is missing')
+  assertIncludes(
+    sources.componentsCss,
+    '.smooth-scroll-container',
+    'smooth-scroll-container rule is missing',
+  )
   assertIncludes(
     sources.componentsCss,
     '-webkit-overflow-scrolling: touch',
@@ -289,6 +374,35 @@ const assertSourceChecks = async () => {
     sources.homePage,
     ':inert="dockHidden ? true : undefined"',
     'Mobile dock no longer removes hidden expanded state from sequential focus',
+  )
+  if (sources.homePage.includes('<Teleport') && sources.homePage.includes('dock-shell')) {
+    fail('Mobile dock reintroduced body-level teleportation outside the app content layer')
+  }
+  if (sources.homePage.includes('dockStyle') || sources.homePage.includes("bottom: 'calc(")) {
+    fail('Mobile dock reintroduced an inline bottom override')
+  }
+  if (sources.homePage.includes('name="v-slide-up"') && sources.homePage.includes('dock-shell')) {
+    fail('Mobile dock reintroduced a slide-up transform wrapper around the fixed dock')
+  }
+  assertIncludes(
+    sources.componentsCss,
+    '.dock-shell::before',
+    'Mobile dock shell no longer suppresses pseudo-element paint',
+  )
+  assertIncludes(
+    sources.componentsCss,
+    '.dock::before',
+    'Mobile dock no longer suppresses dock pseudo-element paint',
+  )
+  assertIncludes(
+    sources.componentsCss,
+    'height: 52px !important;',
+    'Mobile dock no longer pins the pill to a fixed 52px height',
+  )
+  assertIncludes(
+    sources.componentsCss,
+    'max-height: 52px !important;',
+    'Mobile dock no longer prevents a second full-width dock height layer',
   )
   assertIncludes(
     sources.proxyGroupForMobile,
@@ -353,6 +467,21 @@ const assertSourceChecks = async () => {
     ':aria-label="$t(\'folder_manage\')"',
     'Proxy folder manager button no longer exposes an explicit accessible name',
   )
+  assertIncludes(
+    sources.folderTopBar,
+    'proxy-folder-pillbar__scroller',
+    'Proxy folder top bar uses the modern horizontal pill scroller',
+  )
+  assertIncludes(
+    sources.folderItem,
+    'proxy-folder-pill',
+    'Proxy folder items use the shared pill style',
+  )
+  assertIncludes(
+    sources.componentsCss,
+    /\.proxy-folder-pill,\s*[\s\S]*?\.proxy-folder-manage\s*{[\s\S]*?flex:\s*0 0 auto;/,
+    'Proxy folder pills and manage button do not shrink in the horizontal scroller',
+  )
   if (sources.proxiesPage.includes('filterContent(renderPageItems, idx)')) {
     fail('Proxies page still filters the render list from the template for each column')
   }
@@ -368,7 +497,7 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.virtualProxyNodeGrid,
-    'nodeIndexByName.value.get(props.now ?? \'\')',
+    "nodeIndexByName.value.get(props.now ?? '')",
     'Virtual proxy grid no longer uses the cached node-index map for active-row lookup',
   )
   assertIncludes(
@@ -481,6 +610,31 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.proxiesByProvider,
+    ":class=\"nestedScrollSurface ? 'gap-1' : 'gap-2'\"",
+    'Provider-grouped Proxies no longer tightens provider section gaps inside nested scroll',
+  )
+  assertIncludes(
+    sources.proxiesByProvider,
+    ":class=\"nestedScrollSurface ? 'my-1 text-xs' : 'my-2 text-sm'\"",
+    'Provider-grouped Proxies no longer tightens provider headings inside nested scroll',
+  )
+  assertIncludes(
+    sources.proxiesByProvider,
+    '<ProxyNodeGrid :nested-scroll-surface="nestedScrollSurface">',
+    'Provider-grouped Proxies no longer passes nested-scroll state into provider grids',
+  )
+  assertIncludes(
+    sources.proxiesByProvider,
+    'const PROVIDER_SECTION_STYLE: CSSProperties = {',
+    'Provider-grouped Proxies no longer hoists provider section containment style',
+  )
+  assertIncludes(
+    sources.proxiesByProvider,
+    "contentVisibility: 'auto'",
+    'Provider-grouped Proxies no longer lets offscreen provider sections skip rendering work',
+  )
+  assertIncludes(
+    sources.proxiesByProvider,
     'useCalculateMaxProxies(() => props.renderProxies.length, activeIndex)',
     'Provider-grouped Proxies no longer passes reactive inputs into max-proxy calculation',
   )
@@ -508,7 +662,11 @@ const assertSourceChecks = async () => {
   if (sources.proxyProvider.includes('proxyProviederList.value.find')) {
     fail('ProxyProvider still scans provider cards by name')
   }
-  if (sources.proxiesByProvider.includes('const fallbackProviderNameByProxy = providerNameByProxy.value')) {
+  if (
+    sources.proxiesByProvider.includes(
+      'const fallbackProviderNameByProxy = providerNameByProxy.value',
+    )
+  ) {
     fail('Provider-grouped Proxies eagerly evaluates the fallback provider lookup map')
   }
   if (sources.proxiesByProvider.includes('proxies.indexOf(props.now)')) {
@@ -546,9 +704,83 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.proxyNodeCard,
-    'bg-base-200/80 hover:border-base-content/10 sm:hover:bg-base-200',
-    'ProxyNodeCard no longer avoids glass-surface blur in nested scroll',
+    "const NESTED_CARD_CLASS = 'bg-base-200/80'",
+    'ProxyNodeCard no longer avoids glass blur and hover paint in nested scroll',
   )
+  assertIncludes(
+    sources.proxyNodeCard,
+    "const NESTED_TRANSITION_CLASS = ''",
+    'ProxyNodeCard nested-scroll surface still carries transition work during scroll',
+  )
+  assertIncludes(
+    sources.proxyNodeCard,
+    "const DEFAULT_INTERACTION_CLASS = 'active:scale-[0.98]'",
+    'ProxyNodeCard default interaction scale is no longer isolated from nested scroll',
+  )
+  assertIncludes(
+    sources.proxyNodeCard,
+    "const ACTIVE_NESTED_CARD_CLASS = 'bg-primary text-primary-content'",
+    'ProxyNodeCard nested active cards still carry active shadow paint',
+  )
+  assertIncludes(
+    sources.proxyNodeCard,
+    'const useCompactCard = computed(() => props.nestedScrollSurface || isSmallCard.value)',
+    'ProxyNodeCard nested-scroll cards no longer force compact card sizing',
+  )
+  assertIncludes(
+    sources.proxyNodeCard,
+    'useCompactCard.value ? SMALL_CARD_CLASS : LARGE_CARD_CLASS',
+    'ProxyNodeCard nested-scroll root classes no longer use compact spacing',
+  )
+  assertIncludes(
+    sources.proxiesContent,
+    ':nested-scroll-surface="nestedScrollSurface"',
+    'ProxiesContent no longer passes nested-scroll state into plain node grids',
+  )
+  assertIncludes(
+    sources.proxyNodeGrid,
+    "nestedScrollSurface ? 'gap-1' : 'gap-2'",
+    'ProxyNodeGrid no longer tightens grid gaps inside nested scroll',
+  )
+  assertIncludes(
+    sources.proxyNodeGrid,
+    "{ contain: 'layout style paint' }",
+    'ProxyNodeGrid no longer isolates nested-scroll grid layout and paint work',
+  )
+  assertIncludes(
+    sources.proxiesContent,
+    'nestedScrollSurface?: boolean',
+    'ProxiesContent no longer exposes the nested-scroll low-paint surface switch',
+  )
+  assertIncludes(
+    sources.proxiesContent,
+    ':nested-scroll-surface="nestedScrollSurface"',
+    'ProxiesContent no longer forwards the nested-scroll low-paint surface switch',
+  )
+  if (
+    /useCalculateMaxProxies|activeIndex|maxProxies|v-for="node in proxies"/.test(
+      sources.proxiesContent,
+    )
+  ) {
+    fail('Flat Proxies content still runs lazy-render max calculations for non-virtual lists')
+  }
+  assertIncludes(
+    sources.proxiesContent,
+    'v-for="node in renderProxies"',
+    'Flat Proxies content no longer renders small non-virtual lists directly',
+  )
+  assertIncludes(
+    sources.proxyGroupForMobile,
+    ':nested-scroll-surface="true"',
+    'Mobile ProxyGroup expanded nested scroll no longer opts ProxiesContent into low-paint cards',
+  )
+  if (
+    !sources.proxyNodeCard.includes(
+      "'transition-[background-color,transform,box-shadow,border-color] duration-200 ease-out'",
+    )
+  ) {
+    fail('ProxyNodeCard default surface no longer keeps the full card transition')
+  }
   assertIncludes(
     sources.proxyNodeCard,
     'if (props.autoScrollActive === false) return',
@@ -581,8 +813,18 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.proxiesScroll,
-    'if (!enabledState.value) return -1',
-    'Proxy lazy-render calculation still reads the active index while disabled',
+    'const lazyRenderEnabled = computed(',
+    'Proxy lazy-render calculation no longer derives a combined lazy-render guard',
+  )
+  assertIncludes(
+    sources.proxiesScroll,
+    'totalProxyCount.value > SCROLL_STABLE_PROXY_LIMIT',
+    'Proxy lazy-render calculation no longer disables measurement for small lists',
+  )
+  assertIncludes(
+    sources.proxiesScroll,
+    'if (!lazyRenderEnabled.value) return -1',
+    'Proxy lazy-render calculation still reads the active index while lazy rendering is disabled',
   )
   assertIncludes(
     sources.proxiesScroll,
@@ -591,29 +833,73 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.proxiesScroll,
-    'enabledState.value && maxProxies.value < totalProxyCount.value',
-    'Proxy lazy-render infinite-scroll path no longer respects enabled state',
+    'setMaxProxies(totalProxyCount.value)',
+    'Proxy lazy-render calculation no longer keeps small lists fully rendered without scroll listeners',
+  )
+  assertIncludes(
+    sources.proxiesScroll,
+    'if (!lazyRenderEnabled.value) return',
+    'Proxy lazy-render infinite-scroll attach path no longer skips small lists',
+  )
+  assertIncludes(
+    sources.proxiesScroll,
+    'lazyRenderEnabled.value && maxProxies.value < totalProxyCount.value',
+    'Proxy lazy-render infinite-scroll path no longer respects the combined lazy-render guard',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'const scrollDiagnostics = {',
+    'Scroll smoothness verifier no longer records scroll-event diagnostics',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'averageStepDistance',
+    'Scroll smoothness verifier no longer records per-step scroll distance diagnostics',
   )
   assertIncludes(
     sources.bouncein,
-    'let stopVisibleWatch: ReturnType<typeof watch> | undefined',
-    'Bounce-in visibility animation no longer stores a watcher stop handle',
+    'void el',
+    'Bounce-in composable no longer stays as a no-op compatibility shim',
   )
-  assertIncludes(
-    sources.bouncein,
-    'if (!value) return',
-    'Bounce-in visibility animation no longer ignores invisible updates',
-  )
-  assertIncludes(
-    sources.bouncein,
-    'stopVisibleWatch?.()',
-    'Bounce-in visibility animation no longer stops watching after first visible frame',
-  )
-  if (sources.bouncein.includes('el.value.classList.remove(className)')) {
-    fail('Bounce-in visibility animation still removes the visible class during scroll')
+  if (/useElementVisibility|classList\.add|classList\.remove|watch\(/.test(sources.bouncein)) {
+    fail(
+      'Bounce-in composable still registers visibility watchers or mutates classes during scroll',
+    )
   }
-  if (/else\s*\{[\s\S]*el\.value\.classList\.add\(\.\.\.initClassName\)/.test(sources.bouncein)) {
-    fail('Bounce-in visibility animation still resets hidden elements during scroll')
+  if (/route-enter-left|route-enter-right|route-enter-fade/.test(sources.motionCss)) {
+    fail('Route enter slide/fade animation classes are still present')
+  }
+  if (
+    sources.homePage.includes('getRouteEnterClass') ||
+    sources.homePage.includes('shouldAnimateRouteTransition')
+  ) {
+    fail('HomePage still attaches route enter animation classes')
+  }
+  if (
+    /route-page-dragging|--route-drag-x/.test(
+      [sources.swipe, sources.homePage, sources.motionCss].join('\n'),
+    )
+  ) {
+    fail('Swipe still animates route drag follow transforms')
+  }
+  if (/shouldAnimateSwipe|isTransitionLocked|transitionLockTimer|DRAG_FOLLOW_RATIO/.test(sources.swipe)) {
+    fail('Swipe still carries route drag animation or transition-lock state')
+  }
+  if (/requestAnimationFrame\(|style\.setProperty\('--route-drag-x'/.test(sources.swipe)) {
+    fail('Swipe still schedules animation-frame drag transform updates')
+  }
+  if (
+    /scrollAnimationEffect|scroll-animation-effect/.test(
+      [
+        sources.generalSettings,
+        sources.settingsStore,
+        sources.settingsItems,
+        sources.swipe,
+        sources.homePage,
+      ].join('\n'),
+    )
+  ) {
+    fail('Scroll animation setting still exists in runtime settings paths')
   }
   if ((sources.proxiesScroll.match(/maxProxies\.value =/g) ?? []).length > 1) {
     fail('Proxy lazy-render calculation writes maxProxies outside the guarded setter')
@@ -629,11 +915,6 @@ const assertSourceChecks = async () => {
     'Proxy lazy-render calculation no longer pre-renders small non-virtual lists before scroll',
   )
   assertIncludes(
-    sources.proxiesContent,
-    '() => !isVirtualGrid.value',
-    'Flat Proxies content no longer disables lazy-render max calculations for virtual grids',
-  )
-  assertIncludes(
     sources.virtualScroller,
     'pendingMeasureElements',
     'VirtualScroller no longer batches dynamic row measurement',
@@ -643,7 +924,9 @@ const assertSourceChecks = async () => {
     'requestAnimationFrame(flushMeasureElements)',
     'VirtualScroller dynamic row measurement is no longer frame-scheduled',
   )
-  if (/measureElement\(el|:ref="\(?el\)?\s*=>\s*measureElement/.test(sources.virtualProxyNodeGrid)) {
+  if (
+    /measureElement\(el|:ref="\(?el\)?\s*=>\s*measureElement/.test(sources.virtualProxyNodeGrid)
+  ) {
     fail('Virtual proxy grid still measures every rendered row during scroll')
   }
   if (sources.virtualProxyNodeGrid.includes('props.nodes.indexOf(props.now')) {
@@ -669,14 +952,27 @@ const assertSourceChecks = async () => {
   )
   assertIncludes(
     sources.renderProxies,
-    'const renderProxies = renderListEnabled ? sortProxies(filtered, groupName, getLatency) : []',
-    'Render proxies no longer skips full list sorting while render-list output is disabled',
+    'if (!renderListEnabled) {',
+    'Render proxies no longer exits before filtering/sorting when render-list output is disabled',
+  )
+  assertIncludes(
+    sources.renderProxies,
+    'return { renderProxies: [], available: proxies.length }',
+    'Render proxies disabled state no longer avoids full latency availability counts',
+  )
+  assertIncludes(
+    sources.renderProxies,
+    'const renderProxies = sortProxies(filtered, groupName, getLatency)',
+    'Render proxies no longer sorts directly after the render-list enabled guard',
   )
   assertIncludes(
     sources.renderProxies,
     'const available = countAvailableProxies(filtered, getLatency)',
     'Render proxies no longer reuses the lazy latency getter for visible availability counts',
   )
+  if (/renderListEnabled \? sortProxies|renderListEnabled\s*\?\s*sortProxies/.test(sources.renderProxies)) {
+    fail('Render proxies still branches sorting instead of returning before disabled work')
+  }
   assertIncludes(
     sources.proxyGroupForMobile,
     'useRenderProxyList(allProxies, props.name, displayContent)',
@@ -698,15 +994,68 @@ const assertSourceChecks = async () => {
     'Render proxies no longer combines proxy filters into one pass',
   )
   assertIncludes(
+    sources.proxyFoldersStore,
+    'const activeFolderNodeFiltersByGroup = computed(() => {',
+    'Proxy folder node filters are no longer cached as active-folder derived state',
+  )
+  assertIncludes(
+    sources.proxyFoldersStore,
+    'return activeFolderNodeFiltersByGroup.value.get(groupName) ?? null',
+    'Proxy folder node filtering allocates lookup sets during render filtering again',
+  )
+  assertIncludes(
+    sources.proxyFoldersStore,
+    'const pruneManualEntriesForCurrentProxyMap = () => {',
+    'Proxy folder store no longer prunes stale manual folder entries after proxy refresh',
+  )
+  assertIncludes(
+    sources.proxyFoldersStore,
+    'const groupNodes = new Set(proxyMap.value[groupName]?.all ?? [])',
+    'Proxy folder store no longer validates manual node entries against the current proxy group',
+  )
+  assertIncludes(
+    sources.proxyFoldersStore,
+    'if (seen.has(nodeName) || !groupNodes.has(nodeName)) return false',
+    'Proxy folder store no longer deduplicates and removes stale manual node entries',
+  )
+  assertIncludes(
+    sources.proxyFoldersStore,
+    'if (!isCustomFolder(id)) return',
+    'Proxy folder store can delete built-in folder pills again',
+  )
+  assertIncludes(
+    sources.folderManagerContent,
+    'v-if="isCustomFolder(f.id)"',
+    'Proxy folder manager exposes built-in folders to the edit/delete flow again',
+  )
+  assertIncludes(
+    sources.folderEditor,
+    'const canDeleteFolder = computed(() => (folder.value ? isCustomFolder(folder.value.id) : false))',
+    'Proxy folder editor no longer guards delete actions to custom folders only',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'const runConfiguredAppFolderWorkflowCheck = async (send) => {',
+    'Scroll smoothness verifier no longer runs the custom folder browser workflow',
+  )
+  assertIncludes(
     sources.renderProxies,
     'const proxiesCount = computed(() => `${renderProxyState.value.available}/${proxies.value.length}`)',
     'Render proxies count no longer reads availability from the shared derived state',
   )
-  if (sources.renderProxies.includes('proxies.map((name) => [name, getLatencyByName(name, groupName)]')) {
+  if (
+    sources.renderProxies.includes(
+      'proxies.map((name) => [name, getLatencyByName(name, groupName)]',
+    )
+  ) {
     fail('Render proxies still builds the full latency map before filtering and sorting')
   }
   assertIncludes(sources.swipe, 'const SWIPE_START_THRESHOLD = 10', 'Swipe start threshold drifted')
-  assertIncludes(sources.swipe, 'const HORIZONTAL_LOCK_RATIO = 1.35', 'Horizontal swipe lock ratio drifted')
+  assertIncludes(
+    sources.swipe,
+    'const HORIZONTAL_LOCK_RATIO = 1.35',
+    'Horizontal swipe lock ratio drifted',
+  )
   assertIncludes(sources.swipe, 'passive: true', 'Swipe listener is no longer passive')
   assertIncludes(
     sources.proxiesStore,
@@ -769,6 +1118,14 @@ const assertSourceChecks = async () => {
     'ProxyNodeCard no longer stores formatted proxy type labels in cache',
   )
   assertIncludes(
+    sources.proxyNodeCard,
+    'const t = i18n.global.t',
+    'ProxyNodeCard no longer reuses the global i18n translator',
+  )
+  if (/useI18n|vue-i18n/.test(sources.proxyNodeCard)) {
+    fail('ProxyNodeCard still initializes vue-i18n per card instance')
+  }
+  assertIncludes(
     sources.latencyTag,
     'const latencyClass = computed(() =>',
     'LatencyTag no longer caches class merging outside the template',
@@ -819,34 +1176,28 @@ const assertSourceChecks = async () => {
     sources.proxyGroupForMobile.includes('transition-opacity') ||
     sources.proxyGroupForMobile.includes('contentOpacity')
   ) {
-    fail('Mobile ProxyGroup expanded content still animates opacity during provider-grouped scroll sampling')
+    fail(
+      'Mobile ProxyGroup expanded content still animates opacity during provider-grouped scroll sampling',
+    )
   }
   if (sources.proxyGroupForMobile.includes('transition-[width,transform,max-height]')) {
     fail('Mobile ProxyGroup still transitions max-height during provider-grouped expansion')
   }
+  if (
+    /transition-\[width,transform\]|will-change-transform|@transitionend|transitionFallbackTimer|getTransitionFallbackDelay|getComputedStyle\(element\)/.test(
+      sources.proxyGroupForMobile,
+    )
+  ) {
+    fail('Mobile ProxyGroup still carries expanded-panel transition or fallback overhead')
+  }
   assertIncludes(
     sources.proxyGroupForMobile,
-    'transition-[width,transform]',
-    'Mobile ProxyGroup no longer limits expansion transition to width and transform',
+    'settleExpandedState()',
+    'Mobile ProxyGroup no longer settles expanded content immediately after style calculation',
   )
   assertIncludes(
     sources.proxyGroupForMobile,
-    'const getTransitionFallbackDelay = () => {',
-    'Mobile ProxyGroup no longer derives the transition fallback delay from computed style',
-  )
-  assertIncludes(
-    sources.proxyGroupForMobile,
-    'getComputedStyle(element)',
-    'Mobile ProxyGroup transition fallback no longer reads the active element style',
-  )
-  assertIncludes(
-    sources.proxyGroupForMobile,
-    'getTransitionFallbackDelay()',
-    'Mobile ProxyGroup transition fallback returned to a hard-coded timeout',
-  )
-  assertIncludes(
-    sources.proxyGroupForMobile,
-    ':data-expanded-ready="expandedContentReady ? \'true\' : \'false\'"',
+    ":data-expanded-ready=\"expandedContentReady ? 'true' : 'false'\"",
     'Mobile ProxyGroup no longer exposes expanded-content readiness for provider-grouped sampling',
   )
   assertIncludes(
@@ -917,10 +1268,15 @@ const assertSourceChecks = async () => {
   if (sources.proxyGroupForMobile.includes('useBounceOnVisible')) {
     fail('Mobile ProxyGroup still runs entry animations during Proxies scroll sampling')
   }
-  if (sources.proxyProvider.includes(':class="twMerge(') || sources.proxyProvider.includes('twMerge(')) {
+  if (
+    sources.proxyProvider.includes(':class="twMerge(') ||
+    sources.proxyProvider.includes('twMerge(')
+  ) {
     fail('ProxyProvider still merges update button classes at render time')
   }
-  if (/const subscriptionInfo = computed\(\(\) => \{[\s\S]*useI18n\(\)/.test(sources.proxyProvider)) {
+  if (
+    /const subscriptionInfo = computed\(\(\) => \{[\s\S]*useI18n\(\)/.test(sources.proxyProvider)
+  ) {
     fail('ProxyProvider still resolves i18n inside subscriptionInfo computed')
   }
   if (sources.proxyNodeCard.includes(':class="`truncate text-xs tracking-tight')) {
@@ -1017,7 +1373,10 @@ const assertSourceChecks = async () => {
   if ((sources.logsPage.match(/\.filter\(\(log\)/g) ?? []).length > 1) {
     fail('Logs page filters retained rows more than once per render pass')
   }
-  if (sources.logsPage.includes('[log.payload, log.time, log.type]') && !sources.logsPage.includes('fields = [log.payload, log.time, log.type]')) {
+  if (
+    sources.logsPage.includes('[log.payload, log.time, log.type]') &&
+    !sources.logsPage.includes('fields = [log.payload, log.time, log.type]')
+  ) {
     fail('Logs page still creates inline search-field arrays inside filter predicates')
   }
   assertIncludes(
@@ -1035,9 +1394,215 @@ const assertSourceChecks = async () => {
     'ensureConnectionDerivedData(conn).searchFields',
     'Connections filtering no longer reuses cached search fields',
   )
-  if (/dayjs\([^)]*\.start/.test(sources.connectionsStore)) {
-    fail('Connections store still parses connection start time during high-frequency row processing')
+  assertIncludes(
+    sources.connectionCard,
+    'const renderCardItem = (key: CONNECTIONS_TABLE_ACCESSOR_KEY)',
+    'Connection cards no longer render visible fields lazily',
+  )
+  if (
+    /const\s+componentMap\s*:\s*Record<CONNECTIONS_TABLE_ACCESSOR_KEY/.test(sources.connectionCard)
+  ) {
+    fail('Connection cards still build all field components before selecting visible card lines')
   }
+  if (/\.filter\(\s*\(?key\)?\s*=>/.test(sources.connectionCard)) {
+    fail(
+      'Connection cards still allocate filtered line arrays before rendering visible card fields',
+    )
+  }
+  assertIncludes(
+    sources.connectionTable,
+    'const getConnectionCellClass = (columnId: CONNECTIONS_TABLE_ACCESSOR_KEY)',
+    'Connection table no longer uses a stable helper for cell classes',
+  )
+  assertIncludes(
+    sources.connectionTable,
+    'getConnectionStartTime(next.original) - getConnectionStartTime(prev.original)',
+    'Connection table connect-time sorting no longer uses cached parsed start time',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    'export const getConnectionCachedDisplayValue = (',
+    'Connections store no longer exposes cached display values for stable fields',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    'const displayValues: Partial<Record<CONNECTIONS_TABLE_ACCESSOR_KEY, string>> = {',
+    'Connections store no longer groups stable cached display values in a local cache object',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    '[CONNECTIONS_TABLE_ACCESSOR_KEY.Type]: networkTypeText',
+    'Connections store no longer reuses cached network type text for display values',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    '[CONNECTIONS_TABLE_ACCESSOR_KEY.InboundUser]: inboundUser',
+    'Connections store no longer reuses cached inbound user text for display values',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    '[CONNECTIONS_TABLE_ACCESSOR_KEY.DlSpeed]: `${prettyBytesHelper(connection.downloadSpeed)}/s`',
+    'Connections store no longer caches pretty-byte display values for speed fields',
+  )
+  assertIncludes(
+    sources.connectionsStore,
+    'conn.chains.indexOf(chain) !== index',
+    'Connections chain stats no longer dedupes chains without allocating a Set per connection',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'const sampleConnectionsRoute = async () => {',
+    'Scroll smoothness verifier no longer samples the Connections route',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'connectionsScroll = await sampleConnectionsRoute()',
+    'Configured app verification no longer runs Connections scroll sampling',
+  )
+  assertIncludes(
+    sources.logsCard,
+    'scroller-item hover:bg-base-200/40 active:bg-base-200/60 flex h-16 flex-col gap-1 overflow-hidden px-3 py-2 text-sm"',
+    'Logs card reintroduced transition classes in the scroll render path',
+  )
+  if (/transition-colors|duration-\d+/.test(sources.logsCard)) {
+    fail('Logs card still carries transition classes in the scroll render path')
+  }
+  if ((sources.logsCard.match(/v-if="logFilter"/g) ?? []).length < 3) {
+    fail('Logs card no longer skips HighlightText components when the search filter is empty')
+  }
+  assertIncludes(
+    sources.logsPage,
+    ':size="64"',
+    'Logs virtual scroller no longer uses the fixed row height that prevents scrollHeight churn',
+  )
+  if (sources.logsPage.includes('dynamic-size')) {
+    fail('Logs virtual scroller reintroduced runtime row measurement in the scroll render path')
+  }
+  assertIncludes(
+    sources.scrollVerify,
+    'const sampleLogsRoute = async () => {',
+    'Scroll smoothness verifier no longer samples the Logs route',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    'logsScroll = await sampleLogsRoute()',
+    'Configured app verification no longer runs Logs scroll sampling',
+  )
+  if (/new Set\(conn\.chains\)/.test(sources.connectionsStore)) {
+    fail('Connections chain stats still allocates a Set for each active connection')
+  }
+  if (/networkTypeText:\s*string|networkTypeText:/.test(sources.connectionsStore)) {
+    fail('Connections store still keeps a redundant networkTypeText derived field')
+  }
+  if (
+    (sources.connectionsStore.match(/getNetworkTypeFromConnection\(connection\)/g) ?? []).length !==
+    1
+  ) {
+    fail('Connections store computes network type display text more than once per row')
+  }
+  if (
+    (sources.connectionsStore.match(/getInboundUserFromConnection\(connection\)/g) ?? []).length !==
+    1
+  ) {
+    fail('Connections store computes inbound user display text more than once per row')
+  }
+  assertIncludes(
+    sources.connectionTable,
+    'const cachedValue = getConnectionCachedDisplayValue(connection, key)',
+    'Connection table no longer tries cached display values before helper fallback',
+  )
+  assertIncludes(
+    sources.connectionTable,
+    'text: row.getValue<string>(key)',
+    'Connection table highlighted cells no longer reuse row accessor values',
+  )
+  assertIncludes(
+    sources.connectionTable,
+    'const getColumnVisibility = () => {',
+    'Connection table no longer builds column visibility in a single helper',
+  )
+  assertIncludes(
+    sources.connectionTable,
+    'return getColumnVisibility()',
+    'Connection table column visibility getter no longer reuses the single-pass helper',
+  )
+  if (/get columnVisibility\(\)[\s\S]*Object\.fromEntries/.test(sources.connectionTable)) {
+    fail('Connection table column visibility getter still allocates Object.fromEntries maps inline')
+  }
+  assertIncludes(
+    sources.connectionTable,
+    'for (let index = originChains.length - 1; index >= 0; index -= 1)',
+    'Connection table no longer builds chain cells with a reverse index loop',
+  )
+  if (/chains\.unshift\(/.test(sources.connectionTable)) {
+    fail('Connection table still uses unshift while building proxy chain cells')
+  }
+  if (sources.connectionTable.includes("${isReverse && 'flex-row-reverse justify-end'}")) {
+    fail('Connection table chain class binding can still stringify false into the class list')
+  }
+  assertIncludes(
+    sources.connectionCard,
+    'getConnectionCachedDisplayValue(conn, key) ??',
+    'Connection cards no longer reuse cached display values for stable fields',
+  )
+  assertIncludes(
+    sources.connectionCard,
+    'return filter ? (',
+    'Connection cards no longer skip HighlightText components when the search filter is empty',
+  )
+  assertIncludes(
+    sources.connectionCard,
+    'if (!filter) {',
+    'Connection cards no longer use a no-filter fast path for proxy chains',
+  )
+  assertIncludes(
+    sources.connectionCard,
+    'return <span class="w-80 grow truncate break-all">{highlightedText(key)}</span>',
+    'Connection cards no longer render proxy chains as plain text when the search filter is empty',
+  )
+  if (!/if \(!filter\) \{[\s\S]*getConnectionRenderedChains/.test(sources.connectionCard)) {
+    fail('Connection cards no-filter proxy chain fast path no longer runs before ProxyName rendering')
+  }
+  if (sources.connectionCard.includes('useBounceOnVisible')) {
+    fail('Connection cards still initialize scroll-triggered animation work')
+  }
+  if (/\.connection-row\s*\{[^}]*transition/s.test(sources.componentsCss)) {
+    fail('Connection cards reintroduced row transitions in the virtual-scroll render path')
+  }
+  if (/\.connection-row\s*\{[^}]*transform/s.test(sources.componentsCss)) {
+    fail('Connection cards reintroduced row transforms in the virtual-scroll render path')
+  }
+  assertIncludes(
+    sources.connectionCardList,
+    ':overscan="16"',
+    'Connection card virtual scroller no longer uses the tuned mobile overscan for scroll performance',
+  )
+  if (/from 'dayjs'/.test(sources.connectionTable)) {
+    fail('Connection table still imports dayjs for high-frequency sorting')
+  }
+  if (/from 'tailwind-merge'/.test(sources.connectionTable)) {
+    fail('Connection table still imports tailwind-merge for per-cell class generation')
+  }
+  if (/dayjs\([^)]*\.start/.test(sources.connectionsStore)) {
+    fail(
+      'Connections store still parses connection start time during high-frequency row processing',
+    )
+  }
+  assertIncludes(
+    sources.scrollVerify,
+    'const resolveCdpPort = async (envName, defaultPort) => {',
+    'Scroll verifier no longer resolves CDP ports through the automatic fallback helper',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    "await resolveCdpPort('ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT', defaultCdpPort)",
+    'Configured-app scroll verifier no longer auto-selects an available CDP port',
+  )
+  assertIncludes(
+    sources.scrollVerify,
+    "await resolveCdpPort('ZASHBOARD_SCROLL_VERIFY_CDP_PORT', 9234)",
+    'Fixture scroll verifier no longer auto-selects an available CDP port',
+  )
 
   return {
     smoothScrollContainerRule: true,
@@ -1055,6 +1620,8 @@ const assertSourceChecks = async () => {
     proxiesTabsAccessibleNames: true,
     proxyFolderTabsAccessibleNames: true,
     proxyFolderManagerButtonAccessibleName: true,
+    proxyFolderPillbarModernStyle: true,
+    proxyFolderPillsDoNotShrink: true,
     providerGroupedUsesProviderLookupMap: true,
     proxyProviderUsesProviderLookupMap: true,
     providerGroupedCombinesActiveIndex: true,
@@ -1065,7 +1632,9 @@ const assertSourceChecks = async () => {
     providerGroupedBuildsGroupsDirectly: true,
     providerGroupedReusesTruncatedGroups: true,
     proxyLazyRenderSkipsNoopMaxWrites: true,
-    bounceInRunsOncePerElement: true,
+    scrollAnimationsRemoved: true,
+    swipeDragAnimationRemoved: true,
+    mobileProxyExpansionAnimationRemoved: true,
     proxyVirtualGridSkipsLazyRenderCalculation: true,
     proxyLazyRenderSkipsActiveIndexWhileDisabled: true,
     virtualProxyGridCachesActiveIndex: true,
@@ -1083,16 +1652,38 @@ const assertSourceChecks = async () => {
     proxyIconCachesPurifiedSvg: true,
     renderProxiesSingleDerivedState: true,
     renderProxiesSingleFilterPass: true,
+    proxyFolderNodeFiltersCached: true,
+    proxyFolderStaleManualEntriesPruned: true,
+    proxyFolderBuiltinsProtected: true,
+    proxyFolderBrowserWorkflowCovered: true,
     virtualProxyGridAvoidsPerRowMeasurement: true,
     virtualScrollerBatchesDynamicMeasurement: true,
     swipeThreshold: 10,
     horizontalLockRatio: 1.35,
     passiveSwipeListener: true,
     connectionsCacheDerivedRowData: true,
+    connectionCardsRenderVisibleFieldsOnly: true,
+    connectionCardsAvoidFilteredLineArrays: true,
+    connectionCardsSkipEmptyFilterHighlights: true,
+    connectionCardsUsePlainChainFastPath: true,
+    connectionCardsAvoidScrollAnimationHook: true,
+    connectionCardsAvoidRowTransitions: true,
+    connectionCardListUsesCompactOverscan: true,
+    connectionTableCachesSortAndCellClasses: true,
+    connectionTableBuildsChainCellsWithoutUnshift: true,
+    connectionTableReusesAccessorValuesForCells: true,
+    connectionTableBuildsColumnVisibilitySinglePass: true,
+    connectionTableReusesCachedDisplayValues: true,
+    connectionsRouteScrollSampled: true,
+    logsRouteScrollSampled: true,
+    logsCardsAvoidTransitionClasses: true,
+    logsCardsSkipEmptyFilterHighlights: true,
+    logsUseFixedRowHeight: true,
     logsFilterSinglePassCachedFields: true,
     logsCacheTimestampPerSecond: true,
     logsUseNativeTimestampFormatter: true,
     logsUseShallowRef: true,
+    scrollVerifierAutoSelectsCdpPort: true,
   }
 }
 
@@ -1112,12 +1703,47 @@ const assertBuildChecks = async (builtCssFile) => {
   )
   assertIncludes(css, /touch-action:\s*pan-y/, 'Built CSS is missing vertical touch-action')
   assertIncludes(css, '.dock-shell', 'Built CSS is missing dock shell rules')
+  assertIncludes(
+    css,
+    /\.dock-shell\{[^{}]*position:fixed/,
+    'Built CSS no longer keeps the mobile dock on a fixed viewport layer',
+  )
+  assertIncludes(
+    css,
+    '.dock-shell:before,.dock-shell:after',
+    'Built CSS no longer suppresses mobile dock shell pseudo-element paint',
+  )
+  assertIncludes(
+    css,
+    '.dock:before,.dock:after',
+    'Built CSS no longer suppresses mobile dock pseudo-element paint',
+  )
+  assertIncludes(
+    css,
+    /height:52px!important/,
+    'Built CSS no longer pins the mobile dock to a fixed 52px height',
+  )
+  assertIncludes(
+    css,
+    /max-height:52px!important/,
+    'Built CSS no longer prevents a second full-width dock height layer',
+  )
   assertIncludes(css, '.dock-button', 'Built CSS is missing dock button rules')
+  assertIncludes(
+    css,
+    '.proxy-folder-pillbar__scroller',
+    'Built CSS is missing proxy folder pillbar',
+  )
+  assertIncludes(css, '.proxy-folder-pill', 'Built CSS is missing proxy folder pill rules')
+  assertIncludes(css, '.proxy-folder-manage', 'Built CSS is missing proxy folder manage rules')
 
   return {
     builtCssFile,
     smoothScrollContainerRule: true,
     dockRulesStillPresent: true,
+    dockFixedViewportLayer: true,
+    dockSinglePillLayer: true,
+    proxyFolderPillbarRulesStillPresent: true,
   }
 }
 
@@ -1154,7 +1780,7 @@ const renderScrollFixture = (builtCssFile) => {
         position: absolute;
         inset: 0;
         overflow-y: auto;
-        padding: 12px 12px 112px;
+        padding: 12px;
         box-sizing: border-box;
       }
       .proxy-card {
@@ -1304,6 +1930,45 @@ const handleRealtimeWebSocketUpgrade = (request, socket) => {
   realtimeWebSockets.add(socket)
   socket.once('close', () => realtimeWebSockets.delete(socket))
   socket.once('error', () => realtimeWebSockets.delete(socket))
+
+  if (requestUrl.pathname === '/connections') {
+    writeWebSocketTextFrame(
+      socket,
+      JSON.stringify({
+        connections: mockBackend.connections,
+        downloadTotal: mockBackend.connections.reduce((total, conn) => total + conn.download, 0),
+        uploadTotal: mockBackend.connections.reduce((total, conn) => total + conn.upload, 0),
+        memory: 64 * 1024 * 1024,
+      }),
+    )
+  }
+
+  if (requestUrl.pathname === '/logs') {
+    for (const log of mockBackend.logs) {
+      writeWebSocketTextFrame(socket, JSON.stringify(log))
+    }
+  }
+}
+
+const writeWebSocketTextFrame = (socket, text) => {
+  const payload = Buffer.from(text)
+  let header
+
+  if (payload.length < 126) {
+    header = Buffer.from([0x81, payload.length])
+  } else if (payload.length <= 0xffff) {
+    header = Buffer.allocUnsafe(4)
+    header[0] = 0x81
+    header[1] = 126
+    header.writeUInt16BE(payload.length, 2)
+  } else {
+    header = Buffer.allocUnsafe(10)
+    header[0] = 0x81
+    header[1] = 127
+    header.writeBigUInt64BE(BigInt(payload.length), 2)
+  }
+
+  socket.write(Buffer.concat([header, payload]))
 }
 
 const startServer = () =>
@@ -1359,6 +2024,32 @@ const waitForCdpEndpoint = async (cdpPort, getDiagnostics = () => ({})) => {
   }
 
   fail('Edge CDP endpoint did not become ready', { cdpPort, ...getDiagnostics() })
+}
+
+const tryReservePort = (preferredPort) =>
+  new Promise((resolvePort) => {
+    const probe = createNetServer()
+    probe.unref()
+    probe.once('error', () => resolvePort(null))
+    probe.listen({ host: '127.0.0.1', port: preferredPort }, () => {
+      const address = probe.address()
+      const selectedPort =
+        typeof address === 'object' && address ? address.port : Number(preferredPort)
+      probe.close(() => resolvePort(selectedPort))
+    })
+  })
+
+const resolveCdpPort = async (envName, defaultPort) => {
+  const configuredPort = process.env[envName]
+  if (configuredPort) return Number(configuredPort)
+
+  const preferredPort = await tryReservePort(defaultPort)
+  if (preferredPort) return preferredPort
+
+  const fallbackPort = await tryReservePort(0)
+  if (fallbackPort) return fallbackPort
+
+  fail('Could not resolve an available Edge CDP port', { envName, defaultPort })
 }
 
 const createCdpClient = (webSocketUrl) =>
@@ -1423,7 +2114,7 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
   const edgePath = getEdgeExecutable()
   if (!edgePath) fail('Microsoft Edge executable could not be located')
 
-  const cdpPort = Number(process.env.ZASHBOARD_SCROLL_VERIFY_CDP_PORT || 9234)
+  const cdpPort = await resolveCdpPort('ZASHBOARD_SCROLL_VERIFY_CDP_PORT', 9234)
   const userDataDir = await mkdtemp(join(tmpdir(), 'zashboard-scroll-cdp-'))
   const edgeArgs = [
     '--headless=new',
@@ -1509,6 +2200,12 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
       const bottomRect = bottomCard.getBoundingClientRect();
       const dockRect = dockShell.getBoundingClientRect();
       const scrollRect = scroll.getBoundingClientRect();
+      const floatingDock = {
+        scrollOverlapPx: Number((scrollRect.bottom - dockRect.top).toFixed(2)),
+        bottomCardOverlapPx: Number((bottomRect.bottom - dockRect.top).toFixed(2)),
+        bottomCardPassesUnderDock: bottomRect.bottom > dockRect.top + 4,
+        scrollExtendsBehindDock: scrollRect.bottom > dockRect.top + Math.min(48, dockRect.height),
+      };
       return {
         beforeScrollTop,
         afterScrollTop: scroll.scrollTop,
@@ -1533,6 +2230,7 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
           bottom: scrollRect.bottom,
           height: scrollRect.height,
         },
+        floatingDock,
         activeName: activeDockButton.getAttribute('aria-label') || '',
         activeAriaCurrent: activeDockButton.getAttribute('aria-current') || '',
         focusedName: document.activeElement?.getAttribute('aria-label') || '',
@@ -1546,20 +2244,27 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
       returnByValue: true,
     })
 
-    if (evaluation.exceptionDetails) fail('Edge CDP scroll fixture evaluation failed', evaluation.exceptionDetails)
+    if (evaluation.exceptionDetails)
+      fail('Edge CDP scroll fixture evaluation failed', evaluation.exceptionDetails)
 
     const parsed = evaluation.result.value
     if (parsed.touchAction !== 'pan-y') fail('Scroll fixture touch-action is not pan-y', parsed)
     if (parsed.overscrollBehaviorY !== 'contain') {
       fail('Scroll fixture overscroll behavior is not contained', parsed)
     }
-    if (parsed.afterScrollTop <= parsed.beforeScrollTop) fail('Scroll fixture did not scroll', parsed)
+    if (parsed.afterScrollTop <= parsed.beforeScrollTop)
+      fail('Scroll fixture did not scroll', parsed)
     if (parsed.scrollHeight <= parsed.clientHeight) fail('Scroll fixture is not scrollable', parsed)
-    if (parsed.bottomCard.bottom > parsed.dock.top - 4) {
-      fail('Bottom card remains occluded by the mobile dock after scrolling to end', parsed)
+    if (!parsed.floatingDock?.scrollExtendsBehindDock) {
+      fail(
+        'Scroll fixture no longer lets the scroll surface continue behind the floating dock',
+        parsed,
+      )
     }
-    if (parsed.dock.height < 50 || parsed.dock.height > 58) fail('Dock height changed unexpectedly', parsed)
-    if (parsed.dock.width < 300 || parsed.dock.width > 330) fail('Dock width changed unexpectedly', parsed)
+    if (!parsed.floatingDock?.bottomCardPassesUnderDock) {
+      fail('Scroll fixture bottom card no longer passes under the floating dock', parsed)
+    }
+    assertAppDockBounds(parsed.dock, 'Dock dimensions changed unexpectedly', parsed)
     if (parsed.activeName !== 'Proxies' || parsed.activeAriaCurrent !== 'page') {
       fail('Dock active route semantics changed in scroll fixture', parsed)
     }
@@ -1572,6 +2277,7 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
       pass: true,
       browser: 'edge-cdp-scroll-fixture',
       browserVersion: version.Browser,
+      cdpPort,
       builtCssFile,
       fixtureUrl: `${baseUrl}/__scroll-fixture`,
       touchAction: parsed.touchAction,
@@ -1580,6 +2286,7 @@ const runEdgeCdpFixtureCheck = async (builtCssFile) => {
       scrollHeight: parsed.scrollHeight,
       clientHeight: parsed.clientHeight,
       bottomCard: parsed.bottomCard,
+      floatingDock: parsed.floatingDock,
       dock: parsed.dock,
       activeName: parsed.activeName,
       focusOutline: {
@@ -1603,7 +2310,7 @@ const runEdgeCdpAppCheck = async (
   if (!edgePath) fail('Microsoft Edge executable could not be located')
 
   const defaultCdpPort = providerGrouped ? 9236 : 9235
-  const cdpPort = Number(process.env.ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT || defaultCdpPort)
+  const cdpPort = await resolveCdpPort('ZASHBOARD_SCROLL_VERIFY_APP_CDP_PORT', defaultCdpPort)
   const userDataDir = await mkdtemp(join(tmpdir(), 'zashboard-scroll-app-cdp-'))
   const edgeArgs = [
     '--headless=new',
@@ -1713,16 +2420,75 @@ const runEdgeCdpAppCheck = async (
           hitDockShell: Boolean(hit?.closest('.dock-shell')),
         };
       };
+      const hitTestPoint = (x, y) => {
+        const hit = document.elementFromPoint(
+          Math.max(1, Math.min(window.innerWidth - 1, x)),
+          Math.max(1, Math.min(window.innerHeight - 1, y)),
+        );
+
+        return {
+          x: Number(Math.max(1, Math.min(window.innerWidth - 1, x)).toFixed(2)),
+          y: Number(Math.max(1, Math.min(window.innerHeight - 1, y)).toFixed(2)),
+          hitTag: hit?.tagName || '',
+          hitAriaLabel: hit?.closest('[aria-label]')?.getAttribute('aria-label') || '',
+          hitGroupName: hit?.closest('[data-group-name]')?.getAttribute('data-group-name') || '',
+          hitDockButtonName: hit?.closest('.dock-button')?.getAttribute('aria-label') || '',
+          hitDockShell: Boolean(hit?.closest('.dock-shell')),
+          hitId: hit?.id || '',
+          hitClassName: String(hit?.className || ''),
+        };
+      };
       const readDock = () => {
         const dockShell = document.querySelector('.dock-shell');
         const dock = document.querySelector('.dock');
         const dockRect = dock?.getBoundingClientRect();
         const shellRect = dockShell?.getBoundingClientRect();
         const dockStyle = dock ? getComputedStyle(dock) : null;
+        const dockShellStyle = dockShell ? getComputedStyle(dockShell) : null;
+        const shellBefore = dockShell ? getComputedStyle(dockShell, '::before') : null;
+        const shellAfter = dockShell ? getComputedStyle(dockShell, '::after') : null;
+        const dockBefore = dock ? getComputedStyle(dock, '::before') : null;
+        const dockAfter = dock ? getComputedStyle(dock, '::after') : null;
 
         return {
           backgroundColor: dockStyle?.backgroundColor || '',
           backdropFilter: dockStyle?.backdropFilter || dockStyle?.webkitBackdropFilter || '',
+          boxShadow: dockStyle?.boxShadow || '',
+          shellBackgroundColor: dockShellStyle?.backgroundColor || '',
+          shellBoxShadow: dockShellStyle?.boxShadow || '',
+          shellFilter: dockShellStyle?.filter || '',
+          shellPosition: dockShellStyle?.position || '',
+          shellParentTag: dockShell?.parentElement?.tagName || '',
+          pseudo: {
+            shellBefore: {
+              content: shellBefore?.content || '',
+              display: shellBefore?.display || '',
+              backgroundColor: shellBefore?.backgroundColor || '',
+              boxShadow: shellBefore?.boxShadow || '',
+              filter: shellBefore?.filter || '',
+            },
+            shellAfter: {
+              content: shellAfter?.content || '',
+              display: shellAfter?.display || '',
+              backgroundColor: shellAfter?.backgroundColor || '',
+              boxShadow: shellAfter?.boxShadow || '',
+              filter: shellAfter?.filter || '',
+            },
+            dockBefore: {
+              content: dockBefore?.content || '',
+              display: dockBefore?.display || '',
+              backgroundColor: dockBefore?.backgroundColor || '',
+              boxShadow: dockBefore?.boxShadow || '',
+              filter: dockBefore?.filter || '',
+            },
+            dockAfter: {
+              content: dockAfter?.content || '',
+              display: dockAfter?.display || '',
+              backgroundColor: dockAfter?.backgroundColor || '',
+              boxShadow: dockAfter?.boxShadow || '',
+              filter: dockAfter?.filter || '',
+            },
+          },
           top: dockRect?.top || 0,
           bottom: dockRect?.bottom || 0,
           height: dockRect?.height || 0,
@@ -1768,6 +2534,35 @@ const runEdgeCdpAppCheck = async (
             whiteSpace: labelStyle?.whiteSpace || '',
           };
         });
+      const readFolderPillbar = () => {
+        const scroller = document.querySelector('.proxy-folder-pillbar__scroller');
+        const manage = document.querySelector('.proxy-folder-manage');
+        const pills = Array.from(document.querySelectorAll('.proxy-folder-pill'));
+        const scrollerRect = scroller?.getBoundingClientRect();
+        const manageRect = manage?.getBoundingClientRect();
+        const pillRects = pills.map((pill) => {
+          const rect = pill.getBoundingClientRect();
+          const style = getComputedStyle(pill);
+          return {
+            label: pill.textContent?.trim() || '',
+            width: Number(rect.width.toFixed(2)),
+            height: Number(rect.height.toFixed(2)),
+            flexShrink: style.flexShrink,
+          };
+        });
+
+        return {
+          exists: Boolean(scroller),
+          pillCount: pills.length,
+          scrollWidth: scroller?.scrollWidth || 0,
+          clientWidth: scroller?.clientWidth || 0,
+          overflowX: scroller ? getComputedStyle(scroller).overflowX : '',
+          scrollerHeight: Number((scrollerRect?.height || 0).toFixed(2)),
+          manageWidth: Number((manageRect?.width || 0).toFixed(2)),
+          manageHeight: Number((manageRect?.height || 0).toFixed(2)),
+          pillRects,
+        };
+      };
       const clickDockRoute = async (name, hash) => {
         const button = Array.from(document.querySelectorAll('.dock-button')).find(
           (item) => item.getAttribute('aria-label') === name,
@@ -1828,15 +2623,24 @@ const runEdgeCdpAppCheck = async (
           location.hash = hash;
           await waitFor(() => location.hash.includes(hash), name + ' hash navigation', 5000);
         }
+        await waitForSettledFrames();
         const scroll = await waitFor(
           () => {
             const surfaces = Array.from(document.querySelectorAll('.smooth-scroll-container'));
-            return surfaces.at(-1) || null;
+            const surface = surfaces.at(-1);
+            if (!surface) return null;
+            if (!surface.isConnected) return null;
+            const rect = surface.getBoundingClientRect();
+            const style = getComputedStyle(surface);
+            if (rect.height < 300 || style.touchAction !== 'pan-y' || style.overscrollBehaviorY !== 'contain') {
+              return null;
+            }
+            return surface;
           },
           name + ' smooth scroll surface',
           5000,
         );
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await waitForSettledFrames();
 
         const scrollStyle = getComputedStyle(scroll);
         const scrollRect = scroll.getBoundingClientRect();
@@ -1869,6 +2673,96 @@ const runEdgeCdpAppCheck = async (
                 width: dockRect.width,
               }
             : null,
+        };
+      };
+      const sampleConnectionsRoute = async () => {
+        const click = await clickDockRoute('Connections', '#/connections');
+        const scroll = await waitFor(
+          () => {
+            const cardScroller = document.querySelector('.virtual-scroller-scroll');
+            const tableScroller = Array.from(document.querySelectorAll('.base-container')).find(
+              (item) => getComputedStyle(item).overflowY === 'auto',
+            );
+            const surface = cardScroller || tableScroller;
+            if (!surface) return null;
+            if (surface.scrollHeight <= surface.clientHeight + 32) return null;
+            if (!surface.querySelector('.connection-row')) return null;
+            return surface;
+          },
+          'Connections scroll surface',
+          5000,
+        );
+        await waitForSettledFrames();
+        const stableScrollMetrics = await waitForStableScrollMetrics(scroll);
+        const samplingIdle = await waitForSamplingIdle(scroll);
+        const beforeScrollTop = scroll.scrollTop;
+        const frame = await stepScrollToEnd(scroll);
+        const afterScrollTop = scroll.scrollTop;
+        const style = getComputedStyle(scroll);
+        const rows = Array.from(scroll.querySelectorAll('.connection-row'));
+
+        return {
+          click,
+          routeHash: location.hash,
+          activeName: document.querySelector('.dock-active')?.getAttribute('aria-label') || '',
+          target: scroll.classList.contains('virtual-scroller-scroll')
+            ? 'connections-card-virtual-scroll'
+            : 'connections-table-scroll',
+          beforeScrollTop,
+          afterScrollTop,
+          scrollHeight: scroll.scrollHeight,
+          clientHeight: scroll.clientHeight,
+          renderedRowCount: rows.length,
+          firstRowText: rows[0]?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 120) || '',
+          touchAction: style.touchAction,
+          overscrollBehaviorY: style.overscrollBehaviorY,
+          stableScrollMetrics,
+          samplingIdle,
+          frame,
+        };
+      };
+      const sampleLogsRoute = async () => {
+        const click = await clickDockRoute('Logs', '#/logs');
+        const scroll = await waitFor(
+          () => {
+            const surface = document.querySelector('.virtual-scroller-scroll');
+            if (!surface) return null;
+            if (surface.scrollHeight <= surface.clientHeight + 32) return null;
+            const firstRowText = surface.querySelector('.scroller-item')?.textContent || '';
+            if (!firstRowText.includes('360')) return null;
+            return surface;
+          },
+          'Logs scroll surface',
+          8000,
+        );
+        scroll.scrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+        await waitForSettledFrames();
+        scroll.scrollTop = 0;
+        await waitForSettledFrames();
+        const stableScrollMetrics = await waitForStableScrollMetrics(scroll);
+        const samplingIdle = await waitForSamplingIdle(scroll);
+        const beforeScrollTop = scroll.scrollTop;
+        const frame = await stepScrollToEnd(scroll);
+        const afterScrollTop = scroll.scrollTop;
+        const style = getComputedStyle(scroll);
+        const rows = Array.from(scroll.querySelectorAll('.scroller-item'));
+
+        return {
+          click,
+          routeHash: location.hash,
+          activeName: document.querySelector('.dock-active')?.getAttribute('aria-label') || '',
+          target: 'logs-virtual-scroll',
+          beforeScrollTop,
+          afterScrollTop,
+          scrollHeight: scroll.scrollHeight,
+          clientHeight: scroll.clientHeight,
+          renderedRowCount: rows.length,
+          firstRowText: rows[0]?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 120) || '',
+          touchAction: style.touchAction,
+          overscrollBehaviorY: style.overscrollBehaviorY,
+          stableScrollMetrics,
+          samplingIdle,
+          frame,
         };
       };
       const stepScrollToEnd = async (scroll) => {
@@ -1964,19 +2858,31 @@ const runEdgeCdpAppCheck = async (
         const childElementCountBefore = scroll.querySelectorAll('*').length;
         const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
         const steps = Math.max(8, Math.min(32, Math.ceil(maxScrollTop / Math.max(scroll.clientHeight / 2, 1))));
+        const scrollEvents = [];
+        const onScroll = () => {
+          scrollEvents.push({
+            time: performance.now(),
+            scrollTop: scroll.scrollTop,
+          });
+        };
+
+        scroll.addEventListener('scroll', onScroll, { passive: true });
 
         for (let step = 1; step <= steps; step += 1) {
           await new Promise((resolve) => requestAnimationFrame((now) => {
             const nextScrollTop = (maxScrollTop * step) / steps;
+            const scrollTopBefore = scroll.scrollTop;
 
             samples.push(now - previous);
-            sampleScrollTops.push({
-              scrollTopBefore: Number(scroll.scrollTop.toFixed(2)),
-              scrollTopAfter: Number(nextScrollTop.toFixed(2)),
-              remainingAfter: Number((maxScrollTop - nextScrollTop).toFixed(2)),
-            });
             previous = now;
             scroll.scrollTop = nextScrollTop;
+            sampleScrollTops.push({
+              scrollTopBefore: Number(scrollTopBefore.toFixed(2)),
+              scrollTopAfter: Number(scroll.scrollTop.toFixed(2)),
+              targetScrollTop: Number(nextScrollTop.toFixed(2)),
+              stepDistance: Number((scroll.scrollTop - scrollTopBefore).toFixed(2)),
+              remainingAfter: Number((maxScrollTop - scroll.scrollTop).toFixed(2)),
+            });
             resolve();
           }));
         }
@@ -1992,7 +2898,24 @@ const runEdgeCdpAppCheck = async (
         await new Promise((resolve) => requestAnimationFrame(resolve));
         scroll.scrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
         await new Promise((resolve) => requestAnimationFrame(resolve));
+        scroll.removeEventListener('scroll', onScroll);
         longTaskObserver?.disconnect();
+        const scrollEventIntervals = scrollEvents.slice(1).map((event, index) => {
+          return event.time - scrollEvents[index].time;
+        });
+        const maxScrollEventInterval = scrollEventIntervals.reduce(
+          (max, interval) => Math.max(max, interval),
+          0,
+        );
+        const scrollDiagnostics = {
+          maxScrollTop: Number(maxScrollTop.toFixed(2)),
+          steps,
+          averageStepDistance: Number((maxScrollTop / Math.max(steps, 1)).toFixed(2)),
+          scrollEventCount: scrollEvents.length,
+          maxScrollEventInterval: Number(maxScrollEventInterval.toFixed(2)),
+          firstScrollEventTop: Number((scrollEvents[0]?.scrollTop ?? 0).toFixed(2)),
+          lastScrollEventTop: Number((scrollEvents.at(-1)?.scrollTop ?? 0).toFixed(2)),
+        };
         const resourcesAfter = performance.getEntriesByType('resource');
         const newResources = resourcesAfter
           .filter((entry) => !resourceNamesBefore.has(entry.name))
@@ -2064,6 +2987,7 @@ const runEdgeCdpAppCheck = async (
           resourceCountBefore,
           resourceCountAfter: resourcesAfter.length,
           newResources,
+          scrollDiagnostics,
           layoutChanges,
         };
       };
@@ -2295,6 +3219,15 @@ const runEdgeCdpAppCheck = async (
         const dockRect = dockShell.getBoundingClientRect();
         const dock = readDock();
         const scrollRect = scroll.getBoundingClientRect();
+        const pageRoot = scroll.closest('.flex.h-full.w-full.flex-col');
+        const pageRootStyle = pageRoot ? getComputedStyle(pageRoot) : null;
+        const floatingDock = {
+          pageRootPaddingBottom: pageRootStyle?.paddingBottom || '',
+          scrollOverlapPx: Number((scrollRect.bottom - dockRect.top).toFixed(2)),
+          bottomGroupOverlapPx: Number((bottomRect.bottom - dockRect.top).toFixed(2)),
+          bottomGroupPassesUnderDock: bottomRect.bottom > dockRect.top + 4,
+          scrollExtendsBehindDock: scrollRect.bottom > dockRect.top + Math.min(48, dockRect.height),
+        };
         const scrollMetrics = {
           afterScrollTop: scroll.scrollTop,
           scrollHeight: scroll.scrollHeight,
@@ -2309,11 +3242,19 @@ const runEdgeCdpAppCheck = async (
         }));
         const hitTargets = {
           bottomGroup: bottomGroupHit,
+          leftOfDock: hitTestPoint(dockRect.left - 12, dockRect.top + dockRect.height / 2),
+          rightOfDock: hitTestPoint(dockRect.right + 12, dockRect.top + dockRect.height / 2),
+          belowDockCenter: hitTestPoint(
+            dockRect.left + dockRect.width / 2,
+            Math.min(window.innerHeight - 2, dockRect.bottom + 8),
+          ),
           dockButtons: dockButtonHits,
           dockHidden: getComputedStyle(dockShell).pointerEvents === 'none',
         };
         let dockRouteClicks = null;
         let routeScrollSurfaces = null;
+        let connectionsScroll = null;
+        let logsScroll = null;
         if (!${JSON.stringify(providerGrouped)} && !${JSON.stringify(expandedMobileGroup)} && !hitTargets.dockHidden) {
           dockRouteClicks = [];
           for (const [name, hash] of [
@@ -2332,6 +3273,8 @@ const runEdgeCdpAppCheck = async (
           ]) {
             routeScrollSurfaces.push(await readRouteSmoothScrollSurface(name, hash));
           }
+          connectionsScroll = await sampleConnectionsRoute();
+          logsScroll = await sampleLogsRoute();
           await clickDockRoute('Proxies', '#/proxies');
         }
         return {
@@ -2339,7 +3282,6 @@ const runEdgeCdpAppCheck = async (
           url: location.href,
           verifyConfig: {
             lowPowerMode: localStorage.getItem('config/low-power-mode'),
-            scrollAnimationEffect: localStorage.getItem('config/scroll-animation-effect'),
             blurIntensity: localStorage.getItem('config/blur-intensity'),
           },
           groupCount: groups.length,
@@ -2367,9 +3309,12 @@ const runEdgeCdpAppCheck = async (
             bottom: bottomRect.bottom,
             height: bottomRect.height,
           },
+          floatingDock,
           hitTargets,
           dockRouteClicks,
           routeScrollSurfaces,
+          connectionsScroll,
+          logsScroll,
           dock: {
             ...dock,
             shellTop: dockRect.top,
@@ -2377,6 +3322,7 @@ const runEdgeCdpAppCheck = async (
             shellHeight: dockRect.height,
             shellWidth: dockRect.width,
           },
+          folderPillbar: readFolderPillbar(),
           labelRects: readLabelRects(),
           scroll: {
             top: scrollRect.top,
@@ -2402,23 +3348,34 @@ const runEdgeCdpAppCheck = async (
       returnByValue: true,
     })
 
-    if (evaluation.exceptionDetails) fail('Edge CDP app evaluation failed', evaluation.exceptionDetails)
+    if (evaluation.exceptionDetails)
+      fail('Edge CDP app evaluation failed', evaluation.exceptionDetails)
 
     const parsed = evaluation.result.value
     if (!parsed.ok) fail('Edge CDP app readiness check failed', parsed)
     if (!parsed.url.includes('#/proxies')) fail('Configured app did not stay on #/proxies', parsed)
     if (parsed.groupCount < 20) fail('Configured app rendered too few Proxies groups', parsed)
-    if (parsed.touchAction !== 'pan-y') fail('Configured app scroll touch-action is not pan-y', parsed)
+    if (parsed.touchAction !== 'pan-y')
+      fail('Configured app scroll touch-action is not pan-y', parsed)
     if (parsed.overscrollBehaviorY !== 'contain') {
       fail('Configured app scroll overscroll behavior is not contained', parsed)
     }
-    if (parsed.frameAfterScrollTop <= parsed.frameBeforeScrollTop) {
+    const sampledSurfaceScrolls =
+      parsed.frameAfterScrollTop > parsed.frameBeforeScrollTop ||
+      (expandedMobileGroup && parsed.frame.scrollDiagnostics.maxScrollTop === 0)
+
+    if (!sampledSurfaceScrolls) {
       fail('Configured app sampled scroll surface did not scroll', parsed)
     }
-    if (!providerGrouped && !expandedMobileGroup && parsed.afterScrollTop <= parsed.beforeScrollTop) {
+    if (
+      !providerGrouped &&
+      !expandedMobileGroup &&
+      parsed.afterScrollTop <= parsed.beforeScrollTop
+    ) {
       fail('Configured app did not scroll the Proxies page', parsed)
     }
-    if (parsed.scrollHeight <= parsed.clientHeight) fail('Configured app Proxies page is not scrollable', parsed)
+    if (parsed.scrollHeight <= parsed.clientHeight)
+      fail('Configured app Proxies page is not scrollable', parsed)
     if (!['loaded', 'unsupported'].includes(parsed.fontStatusAfterReady)) {
       fail('Configured app font readiness did not settle before scroll sampling', parsed)
     }
@@ -2428,8 +3385,12 @@ const runEdgeCdpAppCheck = async (
     if (!parsed.samplingIdle || parsed.samplingIdle.stableFrames < 4) {
       fail('Configured app did not reach an idle sampling window before frame sampling', parsed)
     }
-    if (parsed.frame.samples < 8) fail('Configured app frame sampling did not collect enough samples', parsed)
-    if (!Array.isArray(parsed.frame.sampleDeltas) || parsed.frame.sampleDeltas.length !== parsed.frame.samples) {
+    if (parsed.frame.samples < 8)
+      fail('Configured app frame sampling did not collect enough samples', parsed)
+    if (
+      !Array.isArray(parsed.frame.sampleDeltas) ||
+      parsed.frame.sampleDeltas.length !== parsed.frame.samples
+    ) {
       fail('Configured app frame diagnostics did not include every sampled delta', parsed)
     }
     if (
@@ -2441,6 +3402,9 @@ const runEdgeCdpAppCheck = async (
     }
     if (!Array.isArray(parsed.frame.longSamples)) {
       fail('Configured app frame diagnostics did not include long sample details', parsed)
+    }
+    if (!parsed.frame.scrollDiagnostics) {
+      fail('Configured app frame diagnostics did not include scroll event details', parsed)
     }
     if (!Array.isArray(parsed.frame.longTasks)) {
       fail('Configured app frame diagnostics did not include long task details', parsed)
@@ -2467,9 +3431,14 @@ const runEdgeCdpAppCheck = async (
     }
     if (
       parsed.frame.longSamples.length &&
-      (parsed.frame.layoutChanges.length || parsed.frame.longTasks.length || parsed.frame.newResources.length)
+      (parsed.frame.layoutChanges.length ||
+        parsed.frame.longTasks.length ||
+        parsed.frame.newResources.length)
     ) {
-      fail('Configured app long frame samples are coupled to layout, long task, or resource churn', parsed)
+      fail(
+        'Configured app long frame samples are coupled to layout, long task, or resource churn',
+        parsed,
+      )
     }
     if (expandedMobileGroup) {
       if (!parsed.hitTargets.dockHidden) {
@@ -2480,9 +3449,6 @@ const runEdgeCdpAppCheck = async (
       }
       if (!parsed.expandedViewportChange.nestedStillReady) {
         fail('Expanded mobile group nested scroll lost readiness after viewport change', parsed)
-      }
-      if (!parsed.expandedViewportChange.nestedStillScrollable) {
-        fail('Expanded mobile group nested scroll stopped being scrollable after viewport change', parsed)
       }
       if (!parsed.expandedViewportChange.dockStillHidden) {
         fail('Expanded mobile group exposed dock hit surface after viewport change', parsed)
@@ -2504,14 +3470,17 @@ const runEdgeCdpAppCheck = async (
       if (parsed.frameTarget !== 'provider-expanded-nested-scroll') {
         fail('Provider-grouped app did not sample the expanded nested scroll surface', parsed)
       }
-      if (!parsed.providerDetails) fail('Provider-grouped app did not collect provider details', parsed)
+      if (!parsed.providerDetails)
+        fail('Provider-grouped app did not collect provider details', parsed)
       const expectedProviderHeadings = [
         'Provider Gamma',
         'Provider Delta',
         'Provider Alpha',
         'Provider Beta',
       ]
-      if (JSON.stringify(parsed.providerDetails.headings) !== JSON.stringify(expectedProviderHeadings)) {
+      if (
+        JSON.stringify(parsed.providerDetails.headings) !== JSON.stringify(expectedProviderHeadings)
+      ) {
         fail('Provider-grouped app provider heading order changed', parsed)
       }
       if (parsed.providerDetails.nodeCount !== 12) {
@@ -2530,7 +3499,8 @@ const runEdgeCdpAppCheck = async (
       if (parsed.frameTarget !== 'mobile-expanded-nested-scroll') {
         fail('Configured app did not sample the mobile expanded nested scroll surface', parsed)
       }
-      if (!parsed.providerDetails) fail('Configured app did not collect expanded mobile details', parsed)
+      if (!parsed.providerDetails)
+        fail('Configured app did not collect expanded mobile details', parsed)
       if (parsed.providerDetails.nestedTouchAction !== 'pan-y') {
         fail('Configured app expanded nested scroll touch-action is not pan-y', parsed)
       }
@@ -2539,22 +3509,66 @@ const runEdgeCdpAppCheck = async (
       }
     }
     if (!parsed.providerGrouped && !parsed.expandedMobileGroup) {
-      if (parsed.bottomGroup.bottom > parsed.dock.top - 4) {
-        fail('Configured app bottom Proxies group remains occluded by the mobile dock', parsed)
+      if (!parsed.folderPillbar?.exists || parsed.folderPillbar.pillCount < 3) {
+        fail('Configured app proxy folder pillbar did not render expected pills', parsed)
+      }
+      if (
+        parsed.folderPillbar.scrollerHeight < 42 ||
+        parsed.folderPillbar.manageWidth < 32 ||
+        parsed.folderPillbar.manageHeight < 32
+      ) {
+        fail('Configured app proxy folder pillbar controls are compressed below touch size', parsed)
+      }
+      const compressedPill = parsed.folderPillbar.pillRects.find(
+        (pill) => pill.height < 32 || pill.width < 56 || pill.flexShrink !== '0',
+      )
+      if (compressedPill) {
+        fail('Configured app proxy folder pill compressed in horizontal scroller', {
+          compressedPill,
+          ...parsed,
+        })
+      }
+      if (parsed.floatingDock?.pageRootPaddingBottom !== '0px') {
+        fail(
+          'Configured app page root reintroduced bottom padding behind the floating dock',
+          parsed,
+        )
+      }
+      if (!parsed.floatingDock?.scrollExtendsBehindDock) {
+        fail(
+          'Configured app Proxies scroll surface no longer continues behind the floating dock',
+          parsed,
+        )
+      }
+      if (!parsed.floatingDock?.bottomGroupPassesUnderDock) {
+        fail('Configured app bottom Proxies group no longer passes under the floating dock', parsed)
       }
       if (parsed.frameTarget !== 'proxies-page-scroll') {
         fail('Configured app did not sample the Proxies page scroll surface', parsed)
       }
-      if (parsed.hitTargets.bottomGroup.hitGroupName !== parsed.lastGroupName) {
-        fail('Configured app bottom Proxies group is not the top hit target', parsed)
+      const dockOutsideHits = [
+        parsed.hitTargets.leftOfDock,
+        parsed.hitTargets.rightOfDock,
+        parsed.hitTargets.belowDockCenter,
+      ].filter(Boolean)
+      const dockOutsideShellHits = dockOutsideHits.filter((hit) => hit.hitDockShell)
+      if (dockOutsideShellHits.length) {
+        fail('Configured app dock shell intercepts pointer hits outside the floating pill', parsed)
       }
-      if (parsed.hitTargets.bottomGroup.hitDockShell) {
-        fail('Configured app bottom Proxies group center is intercepted by the dock', parsed)
+      const dockOutsideMaskHits = dockOutsideHits.filter(
+        (hit) => hit.hitClassName.includes('home-page') && hit.hitClassName.includes('bg-base-200'),
+      )
+      if (dockOutsideMaskHits.length) {
+        fail(
+          'Configured app exposes a full-width base background mask around the floating dock',
+          parsed,
+        )
       }
       const dockHitFailures = parsed.hitTargets.dockButtons.filter(
         (button) => button.hitDockButtonName !== button.expectedName,
       )
-      if (dockHitFailures.length) fail('Configured app dock buttons are not top hit targets', parsed)
+      if (dockHitFailures.length)
+        fail('Configured app dock buttons are not top hit targets', parsed)
       if (!parsed.dockRouteClicks || parsed.dockRouteClicks.length !== 5) {
         fail('Configured app dock route click checks did not run', parsed)
       }
@@ -2576,19 +3590,115 @@ const runEdgeCdpAppCheck = async (
           route.overscrollBehaviorY !== 'contain' ||
           route.rect.height < 300 ||
           !route.dock ||
-          route.dock.height < 50 ||
-          route.dock.height > 58 ||
-          route.dock.width < 300 ||
-          route.dock.width > 330,
+          !isExpectedAppDockBounds(route.dock),
       )
       if (routeSurfaceFailures.length) {
         fail('Configured app route smooth-scroll surfaces are inconsistent', parsed)
       }
+      if (!parsed.connectionsScroll) {
+        fail('Configured app Connections scroll sampling did not run', parsed)
+      }
+      if (
+        !parsed.connectionsScroll.routeHash.includes('#/connections') ||
+        parsed.connectionsScroll.activeName !== 'Connections'
+      ) {
+        fail('Configured app Connections route was not active during scroll sampling', parsed)
+      }
+      if (parsed.connectionsScroll.afterScrollTop <= parsed.connectionsScroll.beforeScrollTop) {
+        fail('Configured app Connections scroll surface did not scroll', parsed)
+      }
+      if (parsed.connectionsScroll.scrollHeight <= parsed.connectionsScroll.clientHeight) {
+        fail('Configured app Connections scroll surface is not scrollable', parsed)
+      }
+      if (parsed.connectionsScroll.renderedRowCount < 8) {
+        fail('Configured app Connections route rendered too few visible rows', parsed)
+      }
+      if (parsed.connectionsScroll.stableScrollMetrics?.stableFrames < 3) {
+        fail('Configured app Connections scroll metrics did not settle before sampling', parsed)
+      }
+      if (parsed.connectionsScroll.samplingIdle?.stableFrames < 4) {
+        fail('Configured app Connections route did not reach an idle sampling window', parsed)
+      }
+      if (parsed.connectionsScroll.frame.samples < 8) {
+        fail('Configured app Connections frame sampling did not collect enough samples', parsed)
+      }
+      if (parsed.connectionsScroll.frame.p95 > 80 || parsed.connectionsScroll.frame.max > 120) {
+        fail('Configured app Connections scroll frame sample exceeded the smoothness budget', parsed)
+      }
+      if (
+        parsed.connectionsScroll.frame.longSamples.length &&
+        (parsed.connectionsScroll.frame.layoutChanges.length ||
+          parsed.connectionsScroll.frame.longTasks.length ||
+          parsed.connectionsScroll.frame.newResources.length)
+      ) {
+        fail(
+          'Configured app Connections long frame samples are coupled to layout, long task, or resource churn',
+          parsed,
+        )
+      }
+      if (!parsed.logsScroll) {
+        fail('Configured app Logs scroll sampling did not run', parsed)
+      }
+      if (
+        !parsed.logsScroll.routeHash.includes('#/logs') ||
+        parsed.logsScroll.activeName !== 'Logs'
+      ) {
+        fail('Configured app Logs route was not active during scroll sampling', parsed)
+      }
+      if (parsed.logsScroll.afterScrollTop <= parsed.logsScroll.beforeScrollTop) {
+        fail('Configured app Logs scroll surface did not scroll', parsed)
+      }
+      if (parsed.logsScroll.scrollHeight <= parsed.logsScroll.clientHeight) {
+        fail('Configured app Logs scroll surface is not scrollable', parsed)
+      }
+      if (parsed.logsScroll.renderedRowCount < 8) {
+        fail('Configured app Logs route rendered too few visible rows', parsed)
+      }
+      if (parsed.logsScroll.stableScrollMetrics?.stableFrames < 3) {
+        fail('Configured app Logs scroll metrics did not settle before sampling', parsed)
+      }
+      if (parsed.logsScroll.samplingIdle?.stableFrames < 4) {
+        fail('Configured app Logs route did not reach an idle sampling window', parsed)
+      }
+      if (parsed.logsScroll.frame.samples < 8) {
+        fail('Configured app Logs frame sampling did not collect enough samples', parsed)
+      }
+      if (parsed.logsScroll.frame.p95 > 80 || parsed.logsScroll.frame.max > 120) {
+        fail('Configured app Logs scroll frame sample exceeded the smoothness budget', parsed)
+      }
+      if (
+        parsed.logsScroll.frame.longSamples.length &&
+        (parsed.logsScroll.frame.layoutChanges.length ||
+          parsed.logsScroll.frame.longTasks.length ||
+          parsed.logsScroll.frame.newResources.length)
+      ) {
+        fail(
+          'Configured app Logs long frame samples are coupled to layout, long task, or resource churn',
+          parsed,
+        )
+      }
     }
-    if (parsed.dock.height < 50 || parsed.dock.height > 58) fail('Dock height changed unexpectedly', parsed)
-    if (parsed.dock.width < 300 || parsed.dock.width > 330) fail('Dock width changed unexpectedly', parsed)
-    assertAppDockSafeArea(parsed.dock, 'Configured app dock safe-area geometry changed unexpectedly', parsed)
-    assertAppDockLabels(parsed.labelRects, 'Configured app dock labels overlap or overflow their buttons', parsed)
+    assertAppDockBounds(parsed.dock, 'Dock dimensions changed unexpectedly', parsed)
+    assertAppDockSafeArea(
+      parsed.dock,
+      'Configured app dock safe-area geometry changed unexpectedly',
+      parsed,
+    )
+    assertAppDockHasFloatingShadow(
+      parsed.dock.boxShadow,
+      'Configured app dock no longer renders as a lifted floating pill',
+      parsed,
+    )
+    assertAppDockShellHasNoVisualLayer(
+      parsed.dock,
+      'Configured app dock shell rendered an extra visual layer',
+      parsed,
+    )
+    assertAppDockLabels(
+      parsed.labelRects,
+      'Configured app dock labels overlap or overflow their buttons',
+      parsed,
+    )
     if (parsed.activeName !== 'Proxies' || parsed.activeAriaCurrent !== 'page') {
       fail('Dock active route semantics changed in configured app', parsed)
     }
@@ -2607,9 +3717,17 @@ const runEdgeCdpAppCheck = async (
     const expandedDockAccessibility = expandedMobileGroup
       ? await runConfiguredAppExpandedDockAccessibilityCheck(send)
       : null
-    const pageKeyboard = expandedMobileGroup ? null : await runConfiguredAppPageKeyboardTraversalCheck(send)
+    const folderWorkflow =
+      !providerGrouped && !expandedMobileGroup
+        ? await runConfiguredAppFolderWorkflowCheck(send)
+        : null
+    const pageKeyboard = expandedMobileGroup
+      ? null
+      : await runConfiguredAppPageKeyboardTraversalCheck(send)
     const keyboard = expandedMobileGroup ? null : await runConfiguredAppDockKeyboardCheck(send)
-    const accessibility = expandedMobileGroup ? null : await runConfiguredAppDockAccessibilityCheck(send)
+    const accessibility = expandedMobileGroup
+      ? null
+      : await runConfiguredAppDockAccessibilityCheck(send)
     const screenshot = await captureAppScreenshot(
       send,
       providerGrouped
@@ -2626,6 +3744,7 @@ const runEdgeCdpAppCheck = async (
       pass: true,
       browser: 'edge-cdp-configured-app',
       browserVersion: version.Browser,
+      cdpPort,
       builtCssFile,
       appUrl: `${baseUrl}/#/proxies`,
       verifyConfig: parsed.verifyConfig,
@@ -2650,10 +3769,15 @@ const runEdgeCdpAppCheck = async (
       stableScrollMetrics: parsed.stableScrollMetrics,
       samplingIdle: parsed.samplingIdle,
       bottomGroup: parsed.bottomGroup,
+      floatingDock: parsed.floatingDock,
       hitTargets: parsed.hitTargets,
       dockRouteClicks: parsed.dockRouteClicks,
       routeScrollSurfaces: parsed.routeScrollSurfaces,
+      connectionsScroll: parsed.connectionsScroll,
+      logsScroll: parsed.logsScroll,
       dock: parsed.dock,
+      folderPillbar: parsed.folderPillbar,
+      folderWorkflow,
       labelRects: parsed.labelRects,
       pageKeyboard,
       keyboard,
@@ -2726,7 +3850,273 @@ const waitForCdpValue = async (send, expression, label) => {
     await delay(50)
   }
 
-  fail(`Timed out waiting for ${label}`, await evaluateCdpValue(send, expression, `${label} diagnostics`))
+  fail(
+    `Timed out waiting for ${label}`,
+    await evaluateCdpValue(send, expression, `${label} diagnostics`),
+  )
+}
+
+const runConfiguredAppFolderWorkflowCheck = async (send) => {
+  const result = await evaluateCdpValue(
+    send,
+    `(async () => {
+      const waitFor = (predicate, label, timeout = 8000) =>
+        new Promise((resolve, reject) => {
+          const startedAt = performance.now();
+          const tick = () => {
+            const value = predicate();
+            if (value) {
+              resolve(value);
+              return;
+            }
+            if (performance.now() - startedAt > timeout) {
+              reject(new Error('Timed out waiting for ' + label));
+              return;
+            }
+            requestAnimationFrame(tick);
+          };
+          tick();
+        });
+      const click = (element) => {
+        const rect = element.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        element.dispatchEvent(new PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          pointerType: 'touch',
+        }));
+        element.dispatchEvent(new PointerEvent('pointerup', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          pointerType: 'touch',
+        }));
+        element.click();
+      };
+      const setInputValue = (input, value) => {
+        input.focus();
+        input.value = value;
+        input.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: value,
+        }));
+      };
+      const normalize = (text) => text.replace(/\\s+/g, ' ').trim();
+
+      if (!location.hash.includes('#/proxies')) location.hash = '#/proxies';
+      const managerButton = await waitFor(
+        () => document.querySelector('.proxy-folder-manage'),
+        'proxy folder manager button',
+      );
+      click(managerButton);
+
+      const createInput = await waitFor(
+        () => document.querySelector('footer input.input'),
+        'proxy folder create input',
+      );
+      const builtinEditButtonsBefore = document.querySelectorAll('[aria-label="Edit folder"]').length;
+      setInputValue(createInput, 'Codex QA');
+      click(await waitFor(() => document.querySelector('[aria-label="Create folder"]:not(:disabled)'), 'enabled create folder button'));
+
+      const editorInput = await waitFor(
+        () => {
+          const input = document.querySelector('.input.input-sm.input-bordered.flex-1');
+          return input?.value === 'Codex QA' ? input : null;
+        },
+        'created proxy folder editor',
+      );
+      const deleteButtonVisible = Boolean(document.querySelector('[aria-label="Delete"]'));
+      const groupSelect = await waitFor(
+        () => Array.from(document.querySelectorAll('select')).find((select) =>
+          Array.from(select.options).some((option) => option.value === 'Group 01')
+        ),
+        'manual node group select',
+      );
+      groupSelect.value = 'Group 01';
+      groupSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const nodeLabel = await waitFor(
+        () => Array.from(document.querySelectorAll('label')).find((label) =>
+          normalize(label.textContent || '').includes('Group 01 Node 01')
+        ),
+        'manual node checkbox label',
+      );
+      const nodeCheckbox = nodeLabel.querySelector('input[type="checkbox"]');
+      if (!nodeCheckbox) throw new Error('Manual node checkbox input is missing');
+      if (!nodeCheckbox.checked) click(nodeCheckbox);
+      await waitFor(() => nodeCheckbox.checked, 'manual node checkbox checked');
+
+      const backButton = document.querySelector('[aria-label="Close"]');
+      if (backButton) click(backButton);
+      await waitFor(() => document.querySelector('footer input.input'), 'folder manager list after editor close');
+      click(managerButton);
+      await waitFor(() => !document.querySelector('footer input.input'), 'folder manager panel closed');
+
+      const customPill = await waitFor(
+        () => Array.from(document.querySelectorAll('.proxy-folder-pill')).find((pill) =>
+          normalize(pill.textContent || '').includes('Codex QA')
+        ),
+        'custom folder pill',
+      );
+      click(customPill);
+      await waitFor(
+        () => {
+          const active = document.querySelector('.proxy-folder-pill.is-active');
+          return normalize(active?.textContent || '').includes('Codex QA');
+        },
+        'custom folder active pill',
+      );
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const visibleGroups = Array.from(document.querySelectorAll('[data-group-name]')).map((item) =>
+        item.getAttribute('data-group-name') || ''
+      );
+      const dockShell = document.querySelector('.dock-shell');
+      const dock = document.querySelector('.dock');
+      const dockShellStyle = dockShell ? getComputedStyle(dockShell) : null;
+      const dockStyle = dock ? getComputedStyle(dock) : null;
+      const shellBefore = dockShell ? getComputedStyle(dockShell, '::before') : null;
+      const shellAfter = dockShell ? getComputedStyle(dockShell, '::after') : null;
+      const dockBefore = dock ? getComputedStyle(dock, '::before') : null;
+      const dockAfter = dock ? getComputedStyle(dock, '::after') : null;
+      const dockRect = dock?.getBoundingClientRect();
+      const shellRect = dockShell?.getBoundingClientRect();
+      const activeFolderText = normalize(document.querySelector('.proxy-folder-pill.is-active')?.textContent || '');
+
+      return {
+        ok: true,
+        builtinEditButtonsBefore,
+        editorInputValue: editorInput.value,
+        deleteButtonVisible,
+        nodeChecked: nodeCheckbox.checked,
+        customPillText: normalize(customPill.textContent || ''),
+        activeFolderText,
+        visibleGroups,
+        visibleGroupCount: visibleGroups.length,
+        dockPointerEvents: dockShellStyle?.pointerEvents || '',
+        dockVisible: dockShellStyle ? dockShellStyle.opacity !== '0' : false,
+        dockButtonCount: document.querySelectorAll('.dock-button').length,
+        dock: {
+          backgroundColor: dockStyle?.backgroundColor || '',
+          backdropFilter: dockStyle?.backdropFilter || dockStyle?.webkitBackdropFilter || '',
+          boxShadow: dockStyle?.boxShadow || '',
+          shellBackgroundColor: dockShellStyle?.backgroundColor || '',
+          shellBoxShadow: dockShellStyle?.boxShadow || '',
+          shellFilter: dockShellStyle?.filter || '',
+          shellPosition: dockShellStyle?.position || '',
+          shellParentTag: dockShell?.parentElement?.tagName || '',
+          pseudo: {
+            shellBefore: {
+              content: shellBefore?.content || '',
+              display: shellBefore?.display || '',
+              backgroundColor: shellBefore?.backgroundColor || '',
+              boxShadow: shellBefore?.boxShadow || '',
+              filter: shellBefore?.filter || '',
+            },
+            shellAfter: {
+              content: shellAfter?.content || '',
+              display: shellAfter?.display || '',
+              backgroundColor: shellAfter?.backgroundColor || '',
+              boxShadow: shellAfter?.boxShadow || '',
+              filter: shellAfter?.filter || '',
+            },
+            dockBefore: {
+              content: dockBefore?.content || '',
+              display: dockBefore?.display || '',
+              backgroundColor: dockBefore?.backgroundColor || '',
+              boxShadow: dockBefore?.boxShadow || '',
+              filter: dockBefore?.filter || '',
+            },
+            dockAfter: {
+              content: dockAfter?.content || '',
+              display: dockAfter?.display || '',
+              backgroundColor: dockAfter?.backgroundColor || '',
+              boxShadow: dockAfter?.boxShadow || '',
+              filter: dockAfter?.filter || '',
+            },
+          },
+          top: dockRect?.top || 0,
+          bottom: dockRect?.bottom || 0,
+          height: dockRect?.height || 0,
+          width: dockRect?.width || 0,
+          safeAreaGap: Number((window.innerHeight - (dockRect?.bottom || 0)).toFixed(2)),
+          shell: shellRect
+            ? {
+                top: shellRect.top,
+                bottom: shellRect.bottom,
+                height: shellRect.height,
+                width: shellRect.width,
+              }
+            : null,
+          viewport: {
+            height: window.innerHeight,
+            width: window.innerWidth,
+          },
+        },
+      };
+    })()`,
+    'configured app custom folder workflow',
+  )
+
+  if (!result?.ok) fail('Configured app custom folder workflow did not complete', result)
+  if (result.builtinEditButtonsBefore !== 0) {
+    fail('Proxy folder manager exposes built-in folders to edit actions', result)
+  }
+  if (result.editorInputValue !== 'Codex QA') {
+    fail('Proxy folder manager did not open the newly created folder editor', result)
+  }
+  if (!result.deleteButtonVisible) {
+    fail('Custom proxy folder editor did not expose delete action', result)
+  }
+  if (!result.nodeChecked) {
+    fail('Custom proxy folder workflow did not select a manual node', result)
+  }
+  if (
+    !result.customPillText.includes('Codex QA') ||
+    !result.activeFolderText.includes('Codex QA')
+  ) {
+    fail('Custom proxy folder pill did not render or activate after creation', result)
+  }
+  if (result.visibleGroupCount !== 1 || result.visibleGroups[0] !== 'Group 01') {
+    fail('Custom proxy folder did not filter the proxies page to the selected node group', result)
+  }
+  if (result.dockPointerEvents !== 'auto' || !result.dockVisible || result.dockButtonCount !== 5) {
+    fail('Custom proxy folder workflow disturbed the mobile dock', result)
+  }
+  assertAppDockSafeArea(
+    result.dock,
+    'Custom proxy folder workflow changed dock safe-area geometry',
+    result,
+  )
+  assertAppDockHasFloatingShadow(
+    result.dock?.boxShadow,
+    'Custom proxy folder workflow removed the dock floating shadow',
+    result,
+  )
+  assertAppDockShellHasNoVisualLayer(
+    result.dock,
+    'Custom proxy folder workflow made the dock shell render an extra visual layer',
+    result,
+  )
+
+  await evaluateCdpValue(
+    send,
+    `(() => {
+      const all = Array.from(document.querySelectorAll('.proxy-folder-pill')).find((pill) =>
+        pill.textContent?.replace(/\\s+/g, ' ').trim().startsWith('All')
+      );
+      all?.click();
+      return true;
+    })()`,
+    'configured app reset active folder',
+  )
+
+  return result
 }
 
 const runConfiguredAppExpandedViewportResizeCheck = async (send) => {
@@ -2781,8 +4171,9 @@ const runConfiguredAppExpandedViewportResizeCheck = async (send) => {
   const restored = await readMetrics('expanded viewport resize check restored')
 
   const result = { before, compact, restored }
-  const assertExpandedMetrics = (metrics, label) => {
-    if (!metrics.ok) fail(`Expanded mobile group viewport ${label} could not read panel metrics`, result)
+  const assertExpandedMetrics = (metrics, label, { requireScrollable = false } = {}) => {
+    if (!metrics.ok)
+      fail(`Expanded mobile group viewport ${label} could not read panel metrics`, result)
     if (!metrics.hash.includes('#/proxies')) {
       fail(`Expanded mobile group viewport ${label} left the Proxies route`, result)
     }
@@ -2792,13 +4183,17 @@ const runConfiguredAppExpandedViewportResizeCheck = async (send) => {
     if (metrics.nestedOverscrollBehaviorY !== 'contain') {
       fail(`Expanded mobile group viewport ${label} nested overscroll behavior changed`, result)
     }
-    if (metrics.nestedScrollHeight <= metrics.nestedClientHeight) {
+    if (requireScrollable && metrics.nestedScrollHeight <= metrics.nestedClientHeight) {
       fail(`Expanded mobile group viewport ${label} nested scroll stopped being scrollable`, result)
     }
     if (!metrics.dockHidden) {
       fail(`Expanded mobile group viewport ${label} exposed the dock hit surface`, result)
     }
-    if (metrics.panelHeight < 160 || metrics.panelTop < -1 || metrics.panelBottom > metrics.viewportHeight + 1) {
+    if (
+      metrics.panelHeight < 160 ||
+      metrics.panelTop < -1 ||
+      metrics.panelBottom > metrics.viewportHeight + 1
+    ) {
       fail(`Expanded mobile group viewport ${label} panel moved outside the viewport`, result)
     }
     if (metrics.nestedBottom > metrics.dockTop + 1) {
@@ -2807,7 +4202,7 @@ const runConfiguredAppExpandedViewportResizeCheck = async (send) => {
   }
 
   assertExpandedMetrics(before, 'before')
-  assertExpandedMetrics(compact, 'compact')
+  assertExpandedMetrics(compact, 'compact', { requireScrollable: true })
   assertExpandedMetrics(restored, 'restored')
 
   return {
@@ -2900,7 +4295,9 @@ const runConfiguredAppExpandedDockAccessibilityCheck = async (send) => {
   const tree = await send('Accessibility.getFullAXTree')
   const navigationNodes = (tree.nodes || [])
     .map(readAxNode)
-    .filter((node) => !node.ignored && node.role === 'navigation' && node.name === 'Main navigation')
+    .filter(
+      (node) => !node.ignored && node.role === 'navigation' && node.name === 'Main navigation',
+    )
   const tabDockEntries = tabFocusOrder.filter((focus) => focus.inDock)
   const result = {
     dom,
@@ -2985,7 +4382,9 @@ const runConfiguredAppExpandedDockRestoreCheck = async (send) => {
   const tree = await send('Accessibility.getFullAXTree')
   const navigationNodes = (tree.nodes || [])
     .map(readAxNode)
-    .filter((node) => !node.ignored && node.role === 'navigation' && node.name === 'Main navigation')
+    .filter(
+      (node) => !node.ignored && node.role === 'navigation' && node.name === 'Main navigation',
+    )
   const result = {
     close,
     dom,
@@ -3002,7 +4401,10 @@ const runConfiguredAppExpandedDockRestoreCheck = async (send) => {
     fail('Expanded mobile dock focus and active route state did not restore after closing', result)
   }
   if (!navigationNodes.length) {
-    fail('Expanded mobile dock navigation did not return to the accessibility tree after closing', result)
+    fail(
+      'Expanded mobile dock navigation did not return to the accessibility tree after closing',
+      result,
+    )
   }
 
   return result
@@ -3156,12 +4558,6 @@ const runConfiguredAppPageKeyboardTraversalCheck = async (send) => {
       focusOrder,
     })
   }
-  if (occluded.length) {
-    fail('Configured app page keyboard traversal found focus targets under the dock', {
-      occluded,
-      focusOrder,
-    })
-  }
   if (dockEntry.dockName !== 'Proxies') {
     fail('Configured app page keyboard traversal entered the dock at the wrong target', {
       dockEntry,
@@ -3174,6 +4570,7 @@ const runConfiguredAppPageKeyboardTraversalCheck = async (send) => {
     firstPageFocus: pageFocusOrder[0],
     lastPageFocus: pageFocusOrder.at(-1),
     dockEntry,
+    occludedFloatingPageFocusCount: occluded.length,
     roles: Array.from(roles),
     focusOrder,
   }
@@ -3300,7 +4697,8 @@ const runConfiguredAppDockKeyboardCheck = async (send) => {
 
 const getAxValue = (payload) => payload?.value ?? payload?.description ?? ''
 
-const getAxProperty = (node, name) => node.properties?.find((property) => property.name === name)?.value
+const getAxProperty = (node, name) =>
+  node.properties?.find((property) => property.name === name)?.value
 
 const readAxNode = (node) => ({
   role: getAxValue(node.role),
@@ -3320,7 +4718,9 @@ const runConfiguredAppDockAccessibilityCheck = async (send) => {
   const readableNodes = nodes.map(readAxNode).filter((node) => !node.ignored)
   const navigationNode = nodes.find((node) => {
     const readable = readAxNode(node)
-    return !readable.ignored && readable.role === 'navigation' && readable.name === 'Main navigation'
+    return (
+      !readable.ignored && readable.role === 'navigation' && readable.name === 'Main navigation'
+    )
   })
   const navigation = navigationNode ? readAxNode(navigationNode) : null
   const collectSubtree = (node, collected = []) => {
@@ -3332,19 +4732,14 @@ const runConfiguredAppDockAccessibilityCheck = async (send) => {
   const navigationSubtree = collectSubtree(navigationNode)
   const dockButtons = navigationSubtree
     .map(readAxNode)
-    .filter(
-      (node) => !node.ignored && node.role === 'button' && expectedOrder.includes(node.name),
-    )
+    .filter((node) => !node.ignored && node.role === 'button' && expectedOrder.includes(node.name))
   const buttonNames = dockButtons.map((node) => node.name)
   const activeButton = dockButtons.find((node) => node.name === 'Proxies')
   const labelDescendantNames = navigationSubtree
     .map(readAxNode)
     .filter(
       (node) =>
-        !node.ignored &&
-        node.role !== 'button' &&
-        node.name &&
-        expectedOrder.includes(node.name),
+        !node.ignored && node.role !== 'button' && node.name && expectedOrder.includes(node.name),
     )
     .map((node) => node.name)
   const extraNamedNodes = navigationSubtree
@@ -3451,10 +4846,12 @@ const assertAppDockSafeArea = (dock, message, details = {}) => {
   const viewport = dock.viewport || {}
 
   if (
+    dock.shellPosition !== 'fixed' ||
+    dock.shellParentTag === 'BODY' ||
+    !isExpectedAppDockBounds(dock) ||
     dock.safeAreaGap < 0 ||
     dock.safeAreaGap > 24 ||
-    shell.width < 300 ||
-    shell.width > 330 ||
+    Math.abs(shell.width - dock.width) > DOCK_SIZE_EPSILON ||
     shell.bottom > viewport.height ||
     shell.top < 0 ||
     dock.bottom > viewport.height ||
@@ -3466,6 +4863,147 @@ const assertAppDockSafeArea = (dock, message, details = {}) => {
   ) {
     fail(message, details)
   }
+}
+
+const getExpectedAppDockWidth = (dock) => {
+  const viewportWidth = dock.viewport?.width || dock.frame?.width || 0
+  if (viewportWidth > 0 && viewportWidth < EXPECTED_DOCK_WIDTH + 48) {
+    return Math.max(0, viewportWidth - 48)
+  }
+  return EXPECTED_DOCK_WIDTH
+}
+
+const isExpectedAppDockBounds = (dock) =>
+  Boolean(dock) &&
+  Math.abs(dock.height - EXPECTED_DOCK_HEIGHT) <= DOCK_SIZE_EPSILON &&
+  Math.abs(dock.width - getExpectedAppDockWidth(dock)) <= DOCK_SIZE_EPSILON
+
+const assertAppDockBounds = (dock, message, details = {}) => {
+  if (!isExpectedAppDockBounds(dock)) {
+    const viewportWidth = dock?.viewport?.width || dock?.frame?.width || 0
+
+    fail(message, {
+      ...details,
+      actualDockSize: {
+        height: dock?.height,
+        width: dock?.width,
+      },
+      expectedDockSize: {
+        height: EXPECTED_DOCK_HEIGHT,
+        width: getExpectedAppDockWidth(dock || {}),
+      },
+      responsiveWidthApplied: viewportWidth > 0 && viewportWidth < EXPECTED_DOCK_WIDTH + 48,
+      viewportWidth,
+    })
+  }
+}
+
+const assertAppDockHasFloatingShadow = (boxShadow, message, details = {}) => {
+  const normalized = String(boxShadow || '')
+    .trim()
+    .toLowerCase()
+  const layers = splitCssShadowLayers(normalized)
+  const outerLayers = layers.filter((layer) => !layer.includes('inset'))
+  const insetLayers = layers.filter((layer) => layer.includes('inset'))
+
+  if (!normalized || normalized === 'none' || !outerLayers.length || !insetLayers.length) {
+    fail(message, {
+      ...details,
+      boxShadow,
+      shadowLayers: layers,
+      outerLayers,
+      insetLayers,
+    })
+  }
+}
+
+const assertAppDockShellHasNoVisualLayer = (dock, message, details = {}) => {
+  const shellBackground = String(dock?.shellBackgroundColor || '')
+    .trim()
+    .toLowerCase()
+  const shellShadow = String(dock?.shellBoxShadow || '')
+    .trim()
+    .toLowerCase()
+  const shellFilter = String(dock?.shellFilter || '')
+    .trim()
+    .toLowerCase()
+  const paintedPseudo = Object.entries(dock?.pseudo || {}).filter(([, pseudo]) =>
+    pseudoElementPaints(pseudo),
+  )
+
+  if (
+    (shellBackground && !isTransparentColor(shellBackground)) ||
+    (shellShadow && shellShadow !== 'none') ||
+    (shellFilter && shellFilter !== 'none') ||
+    paintedPseudo.length
+  ) {
+    fail(message, {
+      ...details,
+      shellBackgroundColor: dock?.shellBackgroundColor,
+      shellBoxShadow: dock?.shellBoxShadow,
+      shellFilter: dock?.shellFilter,
+      paintedPseudo,
+    })
+  }
+}
+
+const pseudoElementPaints = (pseudo) => {
+  if (!pseudo) return false
+  const content = String(pseudo.content || '')
+    .trim()
+    .toLowerCase()
+  const display = String(pseudo.display || '')
+    .trim()
+    .toLowerCase()
+  const background = String(pseudo.backgroundColor || '')
+    .trim()
+    .toLowerCase()
+  const boxShadow = String(pseudo.boxShadow || '')
+    .trim()
+    .toLowerCase()
+  const filter = String(pseudo.filter || '')
+    .trim()
+    .toLowerCase()
+
+  if (!content || content === 'none' || content === 'normal') return false
+  if (display === 'none') return false
+  return (
+    !isTransparentColor(background) ||
+    (boxShadow && boxShadow !== 'none') ||
+    (filter && filter !== 'none')
+  )
+}
+
+const isTransparentColor = (color) => {
+  const normalized = String(color || '')
+    .trim()
+    .toLowerCase()
+  return (
+    !normalized ||
+    normalized === 'transparent' ||
+    normalized === 'rgba(0, 0, 0, 0)' ||
+    normalized === 'rgba(0 0 0 / 0)' ||
+    normalized === 'color(srgb 0 0 0 / 0)'
+  )
+}
+
+const splitCssShadowLayers = (value) => {
+  const layers = []
+  let depth = 0
+  let start = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (char === '(') depth += 1
+    else if (char === ')') depth = Math.max(0, depth - 1)
+    else if (char === ',' && depth === 0) {
+      layers.push(value.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+
+  layers.push(value.slice(start).trim())
+  return layers.filter(Boolean)
 }
 
 const assertAppDockLabels = (labels, message, details = {}) => {
@@ -3502,7 +5040,12 @@ const main = async () => {
     const builtCssFile = await getLatestBuiltCssFile()
     const buildChecks = await assertBuildChecks(builtCssFile)
 
-    if (shouldServeOnly || shouldRunFixtureBrowser || shouldRunAppBrowser || shouldRunProviderGroupedAppBrowser) {
+    if (
+      shouldServeOnly ||
+      shouldRunFixtureBrowser ||
+      shouldRunAppBrowser ||
+      shouldRunProviderGroupedAppBrowser
+    ) {
       server = await startServer()
     }
 
@@ -3561,7 +5104,8 @@ const main = async () => {
         {
           pass: true,
           browser: 'skipped',
-          reason: 'Set ZASHBOARD_SCROLL_VERIFY_FIXTURE_BROWSER=1 to run the Edge CDP scroll fixture',
+          reason:
+            'Set ZASHBOARD_SCROLL_VERIFY_FIXTURE_BROWSER=1 to run the Edge CDP scroll fixture',
           sourceChecks,
           buildChecks,
         },

@@ -17,6 +17,7 @@
   <VirtualScroller
     v-else
     :data="renderConnections"
+    :overscan="16"
     :size="size"
   >
     <template v-slot="{ item }: { item: Connection }">

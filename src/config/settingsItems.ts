@@ -75,10 +75,6 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
         key: `${SETTINGS_MENU_KEY.general}.zashboardSettings.lowPowerMode`,
         label: 'lowPowerMode',
       },
-      {
-        key: `${SETTINGS_MENU_KEY.general}.scrollAnimationEffect`,
-        label: 'scrollAnimationEffect',
-      },
       { key: `${SETTINGS_MENU_KEY.general}.swipeInPages`, label: 'swipeInPages' },
       { key: `${SETTINGS_MENU_KEY.general}.swipeInTabs`, label: 'swipeInTabs' },
       {

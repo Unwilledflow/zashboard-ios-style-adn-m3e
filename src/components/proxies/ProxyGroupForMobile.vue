@@ -11,11 +11,9 @@
       class="mobile-proxy-modal-backdrop glass-backdrop fixed inset-0 z-40 overflow-hidden"
     />
     <div
-      class="mobile-proxy-modal-panel base-container glass-panel absolute flex flex-col overflow-hidden transition-[width,transform] duration-200 ease-out will-change-transform"
+      class="mobile-proxy-modal-panel base-container glass-panel absolute flex flex-col overflow-hidden"
       :style="cardStyle"
       @contextmenu.prevent.stop="handlerLatencyTest"
-      @transitionend="handlerTransitionEnd"
-      ref="cardRef"
     >
       <div class="relative flex h-22 shrink-0 flex-col justify-between p-2">
         <div
@@ -91,6 +89,7 @@
           :name="name"
           :now="proxyGroup.now"
           :render-proxies="renderProxies"
+          :nested-scroll-surface="true"
         />
       </div>
     </div>
@@ -98,16 +97,20 @@
 </template>
 
 <script setup lang="ts">
-import { lockProxiesPageScroll, unlockProxiesPageScroll } from '@/composables/proxies'
+import {
+  lockProxiesPageScroll,
+  unlockProxiesPageScroll,
+  useProxyHiddenGroup,
+} from '@/composables/proxies'
+import { useProxyGroupLatencyTest } from '@/composables/proxyLatency'
 import { useRenderProxyList } from '@/composables/renderProxies'
 import { dockTop } from '@/composables/paddingViews'
 import { useLongPress } from '@/composables/useIOSGestures'
-import { isHiddenGroup } from '@/helper'
 import { PROXIES_PARENT_CLASS } from '@/helper/utils'
-import { hiddenGroupMap, proxyGroupLatencyTest, proxyMap } from '@/store/proxies'
+import { proxyMap } from '@/store/proxies'
 import { groupProxiesByProvider, manageHiddenGroup } from '@/store/settings'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/outline'
-import { computed, nextTick, onBeforeUnmount, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LatencyTag from './LatencyTag.vue'
 import ProxiesByProvider from './ProxiesByProvider.vue'
@@ -126,13 +129,12 @@ const proxyGroup = computed(() => proxyMap.value[props.name])
 const allProxies = computed(() => proxyGroup.value.all ?? [])
 const displayContent = ref(false)
 const { proxiesCount, renderProxies } = useRenderProxyList(allProxies, props.name, displayContent)
-const isLatencyTesting = ref(false)
+const { handlerLatencyTest, isLatencyTesting } = useProxyGroupLatencyTest(() => props.name)
 
 const modalMode = ref(false)
 const expandedContentReady = ref(false)
 
 const cardWrapperRef = ref()
-const cardRef = ref()
 
 const INIT_STYLE = {
   width: '100%',
@@ -144,7 +146,7 @@ const INIT_STYLE = {
   zIndex: 1,
   transform: 'translate3d(0, 0, 0) scale(1)',
 }
-const COLLAPSED_TRANSITION_STYLE = {
+const COLLAPSED_STYLE = {
   width: '100%',
   maxHeight: '100%',
   transform: 'translate3d(0, 0, 0) scale(1)',
@@ -156,37 +158,9 @@ const cardStyle = ref<Record<string, string | number>>({
 let calcStyleFrame: number | undefined
 let suppressClickTimer: ReturnType<typeof setTimeout> | undefined
 let isComponentAlive = true
-let latencyTestController: AbortController | undefined
-let latencyTestSeq = 0
 let expandedReadyFrame: number | undefined
-let transitionFallbackTimer: ReturnType<typeof setTimeout> | undefined
 let pageScrollLockToken: symbol | undefined
 let viewportListenerCleanup: (() => void) | undefined
-
-const parseCssTimeMs = (value: string) => {
-  const trimmed = value.trim()
-  if (!trimmed) return 0
-  if (trimmed.endsWith('ms')) return Number.parseFloat(trimmed)
-  if (trimmed.endsWith('s')) return Number.parseFloat(trimmed) * 1000
-
-  return Number.parseFloat(trimmed) || 0
-}
-
-const getTransitionFallbackDelay = () => {
-  const element = cardRef.value as HTMLElement | undefined
-  if (!element) return 260
-
-  const style = getComputedStyle(element)
-  const durations = style.transitionDuration.split(',').map(parseCssTimeMs)
-  const delays = style.transitionDelay.split(',').map(parseCssTimeMs)
-  const transitionTotal = durations.reduce((max, duration, index) => {
-    const delay = delays[index] ?? delays.at(-1) ?? 0
-
-    return Math.max(max, duration + delay)
-  }, 0)
-
-  return Math.max(260, transitionTotal + 60)
-}
 
 const setProxiesPageScrollLocked = (locked: boolean) => {
   if (locked) {
@@ -204,12 +178,6 @@ const clearExpandedReadyFrame = () => {
   expandedReadyFrame = undefined
 }
 
-const clearTransitionFallbackTimer = () => {
-  if (transitionFallbackTimer === undefined) return
-  clearTimeout(transitionFallbackTimer)
-  transitionFallbackTimer = undefined
-}
-
 const queueExpandedContentReady = () => {
   clearExpandedReadyFrame()
   expandedContentReady.value = false
@@ -220,10 +188,6 @@ const queueExpandedContentReady = () => {
       expandedContentReady.value = true
     })
   })
-}
-
-const isCurrentLatencyTest = (controller: AbortController, seq: number) => {
-  return latencyTestController === controller && latencyTestSeq === seq
 }
 
 const getViewportSize = () => {
@@ -247,7 +211,7 @@ const calcCardStyle = () => {
     if (!cardWrapperRef.value) return
 
     if (!modalMode.value) {
-      cardStyle.value = COLLAPSED_TRANSITION_STYLE
+      cardStyle.value = COLLAPSED_STYLE
       return
     }
 
@@ -331,8 +295,7 @@ const attachViewportListeners = () => {
   }
 }
 
-const settleTransitionState = () => {
-  clearTransitionFallbackTimer()
+const settleExpandedState = () => {
   if (!isComponentAlive) return
 
   if (modalMode.value) {
@@ -355,19 +318,6 @@ const settleTransitionState = () => {
   })
 }
 
-const queueTransitionFallback = () => {
-  clearTransitionFallbackTimer()
-  transitionFallbackTimer = setTimeout(() => {
-    transitionFallbackTimer = undefined
-    settleTransitionState()
-  }, getTransitionFallbackDelay())
-}
-
-const handlerTransitionEnd = (e: TransitionEvent) => {
-  if (e.propertyName !== 'width') return
-  settleTransitionState()
-}
-
 const expandGroup = async () => {
   modalMode.value = !modalMode.value
   setProxiesPageScrollLocked(modalMode.value)
@@ -380,7 +330,7 @@ const expandGroup = async () => {
   clearExpandedReadyFrame()
 
   calcCardStyle()
-  queueTransitionFallback()
+  settleExpandedState()
 }
 
 const handlerCardClick = async () => {
@@ -409,49 +359,14 @@ const longPressBindings = useLongPress({
   },
 })
 
-const handlerLatencyTest = async () => {
-  if (isLatencyTesting.value) return
-
-  latencyTestController?.abort()
-  const controller = new AbortController()
-  const seq = ++latencyTestSeq
-  latencyTestController = controller
-  isLatencyTesting.value = true
-  try {
-    await proxyGroupLatencyTest(props.name, undefined, controller.signal)
-  } catch {
-    // Request interceptor surfaces API failures; keep this click handler settled.
-  } finally {
-    if (isCurrentLatencyTest(controller, seq)) {
-      isLatencyTesting.value = false
-      latencyTestController = undefined
-    }
-  }
-}
-const hiddenGroup = computed({
-  get: () => isHiddenGroup(props.name),
-  set: (value: boolean) => {
-    hiddenGroupMap.value[props.name] = value
-  },
-})
-
-const handlerGroupToggle = () => {
-  hiddenGroup.value = !hiddenGroup.value
-}
+const { handlerGroupToggle, hiddenGroup } = useProxyHiddenGroup(() => props.name)
 
 onUnmounted(() => {
   isComponentAlive = false
   if (calcStyleFrame !== undefined) cancelAnimationFrame(calcStyleFrame)
   clearExpandedReadyFrame()
-  clearTransitionFallbackTimer()
   clearViewportListeners()
   if (suppressClickTimer !== undefined) clearTimeout(suppressClickTimer)
   setProxiesPageScrollLocked(false)
-})
-
-onBeforeUnmount(() => {
-  latencyTestController?.abort()
-  latencyTestSeq += 1
-  latencyTestController = undefined
 })
 </script>

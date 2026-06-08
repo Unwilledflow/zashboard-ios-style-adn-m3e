@@ -271,7 +271,7 @@ export const DEFAULT_THEME = {
   '--radius-selector': '1rem',
   '--size-field': '0.25rem',
   '--size-selector': '0.25rem',
-  'color-scheme': 'dark',
+  'color-scheme': 'light',
   default: false,
   prefersdark: false,
 }

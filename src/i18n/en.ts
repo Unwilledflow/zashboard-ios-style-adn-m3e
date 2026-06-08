@@ -439,9 +439,14 @@ const en = {
   folder_auto_nodeOnly: 'Nodes only',
   folder_add_rule: 'Add rule',
   folder_manual_includes: 'Manually included',
+  folder_manual_nodes: 'Node cards',
   folder_filter_placeholder: 'Filter proxy groups',
+  folder_filter_nodes_placeholder: 'Filter node cards',
   folder_preview: 'Auto-matched groups',
   folder_no_matches: 'No matched groups',
+  folder_no_nodes: 'No node cards',
+  folder_add_node: 'Add to current folder',
+  folder_remove_node: 'Remove from current folder',
   folder_delete_confirm: 'Delete folder "{name}"?',
 }
 

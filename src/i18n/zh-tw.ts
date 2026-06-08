@@ -436,6 +436,11 @@ const zhTW: LANG_MESSAGE = {
   folder_preview: '自動匹配的代理組',
   folder_no_matches: '沒有符合的代理組',
   folder_delete_confirm: '確認刪除資料夾「{name}」？',
+  folder_manual_nodes: 'Node cards',
+  folder_filter_nodes_placeholder: 'Filter node cards',
+  folder_no_nodes: 'No node cards',
+  folder_add_node: 'Add to current folder',
+  folder_remove_node: 'Remove from current folder',
 }
 
 export default zhTW
