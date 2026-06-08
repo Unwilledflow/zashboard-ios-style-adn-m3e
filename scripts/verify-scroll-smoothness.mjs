@@ -1521,11 +1521,17 @@ const assertSourceChecks = async () => {
     'const getColumnVisibility = () => {',
     'Connection table no longer builds column visibility in a single helper',
   )
-  assertIncludes(
-    sources.connectionTable,
-    'return getColumnVisibility()',
-    'Connection table column visibility getter no longer reuses the single-pass helper',
-  )
+  if (
+    !(
+      sources.connectionTable.includes('return getColumnVisibility()') ||
+      (sources.connectionTable.includes('const columnVisibility = computed(getColumnVisibility)') &&
+        sources.connectionTable.includes('return columnVisibility.value'))
+    )
+  ) {
+    fail(
+      'Connection table column visibility getter no longer reuses the single-pass helper or cached computed value',
+    )
+  }
   if (/get columnVisibility\(\)[\s\S]*Object\.fromEntries/.test(sources.connectionTable)) {
     fail('Connection table column visibility getter still allocates Object.fromEntries maps inline')
   }
